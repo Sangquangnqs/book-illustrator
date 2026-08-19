@@ -88,6 +88,12 @@ export class ProjectStorage {
     });
   }
 
+  async readUser(email) {
+    const normalizedEmail = normalizeEmail(email);
+    const usersState = await this.readUsers();
+    return usersState.users[normalizedEmail] ?? null;
+  }
+
   async createProject({ userEmail, title, bookText, id = `project_${randomUUID()}` }) {
     await this.ensureReady();
     const normalizedEmail = normalizeEmail(userEmail);
@@ -126,6 +132,28 @@ export class ProjectStorage {
 
   async readBookText(projectId) {
     return readFile(this.bookPath(projectId), "utf8");
+  }
+
+  async listProjectsForUser(userEmail) {
+    const user = await this.readUser(userEmail);
+    if (!user) {
+      return [];
+    }
+
+    const projects = await Promise.all(
+      user.projectIds.map(async (projectId) => {
+        try {
+          return await this.readProject(projectId);
+        } catch (error) {
+          if (error.code === "ENOENT") {
+            return null;
+          }
+          throw error;
+        }
+      })
+    );
+
+    return projects.filter(Boolean);
   }
 
   async updateProject(projectId, updater) {
