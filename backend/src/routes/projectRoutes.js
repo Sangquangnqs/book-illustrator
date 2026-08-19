@@ -4,6 +4,7 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireSession } from "../middleware/session.js";
+import { withVisibleStepState } from "../pipeline/stepGuards.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -186,19 +187,21 @@ function projectSummary(project) {
 }
 
 function projectDetail(project) {
+  const visibleProject = withVisibleStepState(project);
+
   return {
-    id: project.id,
-    userEmail: project.userEmail,
-    title: project.title,
-    createdAt: project.createdAt,
-    updatedAt: project.updatedAt,
-    status: project.status,
-    currentStep: project.currentStep,
-    stepState: project.stepState,
-    gemini: project.gemini,
-    style: project.style,
-    characters: project.characters,
-    chapters: project.chapters
+    id: visibleProject.id,
+    userEmail: visibleProject.userEmail,
+    title: visibleProject.title,
+    createdAt: visibleProject.createdAt,
+    updatedAt: visibleProject.updatedAt,
+    status: visibleProject.status,
+    currentStep: visibleProject.currentStep,
+    stepState: visibleProject.stepState,
+    gemini: visibleProject.gemini,
+    style: visibleProject.style,
+    characters: visibleProject.characters,
+    chapters: visibleProject.chapters
   };
 }
 

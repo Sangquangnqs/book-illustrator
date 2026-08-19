@@ -41,6 +41,10 @@ export class ProjectStorage {
     return path.join(this.projectDir(projectId), "book.txt");
   }
 
+  imagePath(projectId, kind, fileName) {
+    return path.join(this.projectDir(projectId), "images", kind, fileName);
+  }
+
   async ensureReady() {
     this.readyPromise = this.readyPromise ?? this.#ensureReady();
 
@@ -134,6 +138,21 @@ export class ProjectStorage {
     return readFile(this.bookPath(projectId), "utf8");
   }
 
+  async writeProjectImage(projectId, kind, fileName, contents) {
+    if (!["portraits", "chapters"].includes(kind)) {
+      throw new Error(`Unsupported image kind: ${kind}`);
+    }
+
+    if (!/^[a-zA-Z0-9_.-]+$/.test(fileName)) {
+      throw new Error("Unsafe image file name");
+    }
+
+    const imagePath = this.imagePath(projectId, kind, fileName);
+    await mkdir(path.dirname(imagePath), { recursive: true });
+    await writeFile(imagePath, contents);
+    return `${kind}/${fileName}`;
+  }
+
   async listProjectsForUser(userEmail) {
     const user = await this.readUser(userEmail);
     if (!user) {
@@ -160,6 +179,11 @@ export class ProjectStorage {
     return this.mutex.runExclusive(projectId, async () => {
       const current = await this.readProject(projectId);
       const updated = await updater(current);
+
+      if (updated === current) {
+        return current;
+      }
+
       const parsed = parseProject(
         withDerivedCurrentStep({
           ...updated,
