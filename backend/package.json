@@ -1,0 +1,19 @@
+{
+  "name": "@book-illustrator/backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "dotenv": "17.2.2",
+    "express": "5.1.0"
+  },
+  "devDependencies": {
+    "supertest": "7.1.4",
+    "vitest": "3.2.4"
+  }
+}
