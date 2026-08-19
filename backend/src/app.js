@@ -1,18 +1,23 @@
 import express from "express";
 import multer from "multer";
 import { ZodError } from "zod";
-import { getDataDir, getSessionSecret } from "./config/env.js";
+import { getDataDir, getGeminiApiKey, getSessionSecret } from "./config/env.js";
 import { PipelineService } from "./pipeline/pipelineService.js";
 import { createProjectRouter } from "./routes/projectRoutes.js";
 import { createPipelineRouter } from "./routes/pipelineRoutes.js";
 import { createSessionRouter } from "./routes/sessionRoutes.js";
 import { createFakeGeminiClient } from "./services/geminiClient.fake.js";
+import { createGeminiClient } from "./services/geminiClient.js";
 import { ProjectStorage } from "./storage/projectStorage.js";
 
 export function createApp(options = {}) {
   const storage = options.storage ?? new ProjectStorage({ dataDir: options.dataDir ?? getDataDir() });
   const sessionSecret = options.sessionSecret ?? getSessionSecret();
-  const geminiClient = options.geminiClient ?? createFakeGeminiClient();
+  const geminiClient =
+    options.geminiClient ??
+    (process.env.NODE_ENV === "test"
+      ? createFakeGeminiClient()
+      : createGeminiClient({ apiKey: getGeminiApiKey() }));
   const pipelineService =
     options.pipelineService ??
     new PipelineService({

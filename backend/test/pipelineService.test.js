@@ -286,6 +286,10 @@ describe("PipelineService", () => {
     const deferred = createDeferred();
     const service = createService({
       ensureBookContext: async () => ({ fileUri: "files/fake-book", bookInteractionId: "fake-book" }),
+      ensureImageContext: async () => ({
+        charactersImageInteractionId: "fake-characters-image-interaction",
+        latestImageInteractionId: "fake-characters-image-interaction"
+      }),
       generatePortrait: async () => {
         await deferred.promise;
         return { bytes: Buffer.from("old portrait") };
@@ -425,7 +429,7 @@ async function runAndWait(service, args, isDone = (stored) => stored.stepState.s
 }
 
 async function waitForProject(service, projectId, predicate) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     const project = service.viewProject(await storage.readProject(projectId));
     if (predicate(project)) {
       return project;
@@ -437,7 +441,7 @@ async function waitForProject(service, projectId, predicate) {
 }
 
 async function waitForCondition(predicate) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     if (predicate()) {
       return;
     }

@@ -24,3 +24,13 @@ export function getSessionSecret() {
 
   return secret;
 }
+
+export function getGeminiApiKey() {
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is required");
+  }
+
+  return apiKey;
+}

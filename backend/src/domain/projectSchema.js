@@ -104,6 +104,8 @@ export const projectSchema = z
         bookInteractionId: z.string().min(1).optional(),
         styleInteractionId: z.string().min(1).optional(),
         charactersInteractionId: z.string().min(1).optional(),
+        charactersImageInteractionId: z.string().min(1).optional(),
+        latestImageInteractionId: z.string().min(1).optional(),
         chaptersInteractionId: z.string().min(1).optional()
       })
       .strict(),

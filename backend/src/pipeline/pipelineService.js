@@ -160,25 +160,19 @@ export class PipelineService {
       let project;
 
       if (step === "STYLE") {
-        let style = input.style?.trim();
-        let gemini = {};
-
-        if (!style) {
-          const projectWithContext = await this.#ensureBookContext(projectId, runId);
-          const result = await this.geminiClient.generateStyle({
-            project: projectWithContext,
-            bookText: await this.storage.readBookText(projectId)
-          });
-          await this.#requireCurrentRun(projectId, runId);
-          style = z.string().trim().min(1).parse(result.style);
-          gemini = result.gemini;
-        }
+        const projectWithContext = await this.#ensureBookContext(projectId, runId);
+        const result = await this.geminiClient.generateStyle({
+          project: projectWithContext,
+          style: input.style?.trim()
+        });
+        await this.#requireCurrentRun(projectId, runId);
+        const style = z.string().trim().min(1).parse(result.style);
 
         project = await this.#completeSuccess(projectId, runId, step, (current) => ({
           ...current,
           status: "STYLE_DONE",
           stepState: idleStepState,
-          gemini: mergeGemini(current.gemini, gemini),
+          gemini: mergeGemini(current.gemini, result.gemini),
           style
         }));
       } else if (step === "CHARACTERS") {
@@ -207,6 +201,7 @@ export class PipelineService {
         }));
       } else if (step === "PORTRAITS") {
         await this.#ensureBookContext(projectId, runId);
+        await this.#ensureImageContext(projectId, runId);
         await this.#generateImages({
           projectId,
           runId,
@@ -323,6 +318,44 @@ export class PipelineService {
     return updated;
   }
 
+  async #ensureImageContext(projectId, runId) {
+    const current = await this.#requireCurrentRun(projectId, runId);
+
+    if (current.gemini.charactersImageInteractionId) {
+      return current;
+    }
+
+    const result = await this.geminiClient.ensureImageContext({
+      project: current
+    });
+
+    await this.#requireCurrentRun(projectId, runId);
+
+    const updated = await this.storage.updateProject(projectId, (project) => {
+      if (project.stepState.runId !== runId) {
+        return project;
+      }
+
+      if (project.gemini.charactersImageInteractionId) {
+        return project;
+      }
+
+      return {
+        ...project,
+        gemini: mergeGemini(project.gemini, {
+          charactersImageInteractionId: result.charactersImageInteractionId,
+          latestImageInteractionId: result.latestImageInteractionId ?? result.charactersImageInteractionId
+        })
+      };
+    });
+
+    if (updated.stepState.runId !== runId) {
+      throw new SupersededRunError();
+    }
+
+    return updated;
+  }
+
   async #generateImages({ projectId, runId, step, listKey, kind, fileNameFor, generate }) {
     let current = await this.#requireCurrentRun(projectId, runId);
 
@@ -359,7 +392,7 @@ export class PipelineService {
           path,
           error: null,
           geminiInteractionId: result.geminiInteractionId
-        });
+        }, result.gemini);
       } catch (error) {
         await this.#updateImageItem(projectId, runId, listKey, item.id, {
           status: "failed",
@@ -371,7 +404,7 @@ export class PipelineService {
     }
   }
 
-  async #updateImageItem(projectId, runId, listKey, itemId, image) {
+  async #updateImageItem(projectId, runId, listKey, itemId, image, gemini = {}) {
     return this.storage.updateProject(projectId, (current) => {
       if (current.stepState.runId !== runId) {
         return current;
@@ -379,6 +412,7 @@ export class PipelineService {
 
       return {
         ...current,
+        gemini: mergeGemini(current.gemini, gemini),
         [listKey]: current[listKey].map((item) =>
           item.id === itemId
             ? {

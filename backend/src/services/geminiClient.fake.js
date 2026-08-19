@@ -36,7 +36,7 @@ export function createFakeGeminiClient(options = {}) {
     },
     generateStyle(input) {
       return call("generateStyle", input, () => ({
-        style: options.style ?? "warm watercolor storybook style",
+        style: input.style ?? options.style ?? "warm watercolor storybook style",
         gemini: { styleInteractionId: "fake-style-interaction" }
       }));
     },
@@ -50,10 +50,19 @@ export function createFakeGeminiClient(options = {}) {
         gemini: { charactersInteractionId: "fake-characters-interaction" }
       }));
     },
+    ensureImageContext(input) {
+      return call("ensureImageContext", input, () => ({
+        charactersImageInteractionId:
+          options.charactersImageInteractionId ?? "fake-characters-image-interaction",
+        latestImageInteractionId:
+          options.charactersImageInteractionId ?? "fake-characters-image-interaction"
+      }));
+    },
     generatePortrait(input) {
       return call("generatePortrait", input, () => ({
         bytes: Buffer.from(`fake portrait ${input.character.id}`),
-        geminiInteractionId: `fake-portrait-${input.character.id}`
+        geminiInteractionId: `fake-portrait-${input.character.id}`,
+        gemini: { latestImageInteractionId: `fake-portrait-${input.character.id}` }
       }));
     },
     generateChapters(input) {
@@ -68,7 +77,8 @@ export function createFakeGeminiClient(options = {}) {
     generateIllustration(input) {
       return call("generateIllustration", input, () => ({
         bytes: Buffer.from(`fake illustration ${input.chapter.id}`),
-        geminiInteractionId: `fake-illustration-${input.chapter.id}`
+        geminiInteractionId: `fake-illustration-${input.chapter.id}`,
+        gemini: { latestImageInteractionId: `fake-illustration-${input.chapter.id}` }
       }));
     }
   };
