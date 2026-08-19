@@ -24,36 +24,35 @@ afterEach(async () => {
 
 describe("PipelineService", () => {
   it("runs all five happy-path transitions in order", async () => {
-    const client = createFakeGeminiClient();
-    const service = createService(client);
+    const service = createService(createFakeGeminiClient());
     const project = await createProject();
 
-    await expect(service.runStep({ projectId: project.id, userEmail, step: "STYLE" })).resolves.toMatchObject({
-      type: "completed",
-      project: { status: "STYLE_DONE", currentStep: "CHARACTERS", style: expect.any(String) }
+    await expect(runAndWait(service, { projectId: project.id, userEmail, step: "STYLE" })).resolves.toMatchObject({
+      status: "STYLE_DONE",
+      currentStep: "CHARACTERS",
+      style: expect.any(String)
     });
-    await expect(
-      service.runStep({ projectId: project.id, userEmail, step: "CHARACTERS" })
-    ).resolves.toMatchObject({
-      type: "completed",
-      project: { status: "CHARACTERS_DONE", currentStep: "PORTRAITS" }
+    await expect(runAndWait(service, { projectId: project.id, userEmail, step: "CHARACTERS" })).resolves.toMatchObject({
+      status: "CHARACTERS_DONE",
+      currentStep: "PORTRAITS"
     });
-    await expect(service.runStep({ projectId: project.id, userEmail, step: "PORTRAITS" })).resolves.toMatchObject({
-      type: "completed",
-      project: { status: "PORTRAITS_DONE", currentStep: "CHAPTERS" }
+    await expect(runAndWait(service, { projectId: project.id, userEmail, step: "PORTRAITS" })).resolves.toMatchObject({
+      status: "PORTRAITS_DONE",
+      currentStep: "CHAPTERS"
     });
-    await expect(service.runStep({ projectId: project.id, userEmail, step: "CHAPTERS" })).resolves.toMatchObject({
-      type: "completed",
-      project: { status: "CHAPTERS_DONE", currentStep: "ILLUSTRATIONS" }
+    await expect(runAndWait(service, { projectId: project.id, userEmail, step: "CHAPTERS" })).resolves.toMatchObject({
+      status: "CHAPTERS_DONE",
+      currentStep: "ILLUSTRATIONS"
     });
-    const final = await service.runStep({ projectId: project.id, userEmail, step: "ILLUSTRATIONS" });
+    const final = await runAndWait(service, { projectId: project.id, userEmail, step: "ILLUSTRATIONS" });
 
     expect(final).toMatchObject({
-      type: "completed",
-      project: { status: "DONE", currentStep: null, stepState: { status: "idle" } }
+      status: "DONE",
+      currentStep: null,
+      stepState: { status: "idle" }
     });
-    expect(final.project.characters.every((character) => character.image.status === "done")).toBe(true);
-    expect(final.project.chapters.every((chapter) => chapter.image.status === "done")).toBe(true);
+    expect(final.characters.every((character) => character.image.status === "done")).toBe(true);
+    expect(final.chapters.every((chapter) => chapter.image.status === "done")).toBe(true);
   });
 
   it("rejects out-of-order steps", async () => {
@@ -72,6 +71,7 @@ describe("PipelineService", () => {
     const deferred = createDeferred();
     let generateStyleCalls = 0;
     const client = {
+      ensureBookContext: async () => ({ fileUri: "files/fake-book", bookInteractionId: "fake-book" }),
       generateStyle: async () => {
         generateStyleCalls += 1;
         await deferred.promise;
@@ -81,13 +81,18 @@ describe("PipelineService", () => {
     const service = createService(client);
     const project = await createProject();
 
-    const first = service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
-    await waitFor(() => generateStyleCalls === 1);
+    const first = await service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
     const second = await service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
 
+    expect(first).toMatchObject({ type: "running", project: { stepState: { status: "running" } } });
     expect(second).toMatchObject({ type: "already_running", project: { stepState: { status: "running" } } });
+    await waitForCondition(() => generateStyleCalls === 1);
+    expect(generateStyleCalls).toBe(1);
+
     deferred.resolve();
-    await expect(first).resolves.toMatchObject({ type: "completed", project: { status: "STYLE_DONE" } });
+    await expect(waitForProject(service, project.id, (stored) => stored.status === "STYLE_DONE")).resolves.toMatchObject({
+      status: "STYLE_DONE"
+    });
   });
 
   it("returns the persisted running state without another Gemini call", async () => {
@@ -109,15 +114,15 @@ describe("PipelineService", () => {
   });
 
   it("persists failed steps and requires retry", async () => {
-    const client = createFakeGeminiClient({ failures: { generateStyle: "style failed" } });
-    const service = createService(client);
+    const service = createService(createFakeGeminiClient({ failures: { generateStyle: "style failed" } }));
     const project = await createProject();
 
-    const failed = await service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
+    const started = await service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
+    const failed = await waitForProject(service, project.id, (stored) => stored.stepState.status === "failed");
 
+    expect(started.type).toBe("running");
     expect(failed).toMatchObject({
-      type: "failed",
-      project: { stepState: { status: "failed", step: "STYLE", error: { message: "style failed" } } }
+      stepState: { status: "failed", step: "STYLE", error: { message: "style failed" } }
     });
     await expect(service.runStep({ projectId: project.id, userEmail, step: "STYLE" })).rejects.toMatchObject({
       code: "FAILED_RETRY_REQUIRED"
@@ -125,8 +130,7 @@ describe("PipelineService", () => {
   });
 
   it("requires explicit retry for stale running steps", async () => {
-    const client = createFakeGeminiClient();
-    const service = createService(client);
+    const service = createService(createFakeGeminiClient());
     const project = await createProject();
     await storage.updateProject(project.id, (current) => ({
       ...current,
@@ -140,8 +144,7 @@ describe("PipelineService", () => {
   });
 
   it("creates a new runId when retrying", async () => {
-    const client = createFakeGeminiClient({ style: "charcoal" });
-    const service = createService(client);
+    const service = createService(createFakeGeminiClient({ style: "charcoal" }));
     const project = await createProject();
     await storage.updateProject(project.id, (current) => ({
       ...current,
@@ -154,34 +157,33 @@ describe("PipelineService", () => {
       }
     }));
 
-    const result = await service.retryStep({ projectId: project.id, userEmail, step: "STYLE" });
+    const retry = await service.retryStep({ projectId: project.id, userEmail, step: "STYLE" });
+    const result = await waitForProject(service, project.id, (stored) => stored.status === "STYLE_DONE");
 
-    expect(result).toMatchObject({ type: "completed", project: { status: "STYLE_DONE", style: "charcoal" } });
-    expect(result.project.stepState.runId).toBe(null);
-    expect(runCounter).toBe(1);
+    expect(retry).toMatchObject({ type: "running", project: { stepState: { runId: "run_1" } } });
+    expect(result).toMatchObject({ status: "STYLE_DONE", style: "charcoal", stepState: { runId: null } });
   });
 
   it("does not let an old success completion overwrite newer retry state", async () => {
     const deferred = createDeferred();
-    const client = {
+    const service = createService({
+      ensureBookContext: async () => ({ fileUri: "files/fake-book", bookInteractionId: "fake-book" }),
       generateStyle: async () => {
         await deferred.promise;
         return { style: "old style", gemini: {} };
       }
-    };
-    const service = createService(client);
+    });
     const project = await createProject();
 
-    const oldRun = service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
-    await waitFor(async () => (await storage.readProject(project.id)).stepState.status === "running");
-    now = new Date("2026-08-19T07:00:00.000Z");
+    await service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
+    await waitForProject(service, project.id, (stored) => stored.stepState.status === "running");
     await storage.updateProject(project.id, (current) => ({
       ...current,
       stepState: runningState("STYLE", "run_new", "2026-08-19T07:00:00.000Z")
     }));
 
     deferred.resolve();
-    await oldRun;
+    await delay(20);
 
     const stored = await storage.readProject(project.id);
     expect(stored.status).toBe("CREATED");
@@ -191,24 +193,24 @@ describe("PipelineService", () => {
 
   it("does not let an old failure completion overwrite newer retry state", async () => {
     const deferred = createDeferred();
-    const client = {
+    const service = createService({
+      ensureBookContext: async () => ({ fileUri: "files/fake-book", bookInteractionId: "fake-book" }),
       generateStyle: async () => {
         await deferred.promise;
         throw new Error("old failure");
       }
-    };
-    const service = createService(client);
+    });
     const project = await createProject();
 
-    const oldRun = service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
-    await waitFor(async () => (await storage.readProject(project.id)).stepState.status === "running");
+    await service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
+    await waitForProject(service, project.id, (stored) => stored.stepState.status === "running");
     await storage.updateProject(project.id, (current) => ({
       ...current,
       stepState: runningState("STYLE", "run_new", "2026-08-19T07:00:00.000Z")
     }));
 
     deferred.resolve();
-    await oldRun;
+    await delay(20);
 
     const stored = await storage.readProject(project.id);
     expect(stored.stepState).toMatchObject({ status: "running", runId: "run_new", error: null });
@@ -229,22 +231,116 @@ describe("PipelineService", () => {
     });
     const service = createService(client);
     const project = await createProject();
-    await service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
-    await service.runStep({ projectId: project.id, userEmail, step: "CHARACTERS" });
+    await runAndWait(service, { projectId: project.id, userEmail, step: "STYLE" });
+    await runAndWait(service, { projectId: project.id, userEmail, step: "CHARACTERS" });
 
-    const failed = await service.runStep({ projectId: project.id, userEmail, step: "PORTRAITS" });
+    const failed = await runAndWait(service, { projectId: project.id, userEmail, step: "PORTRAITS" }, (stored) =>
+      stored.stepState.status === "failed"
+    );
 
-    expect(failed.project.characters[0].image).toMatchObject({ status: "done", path: "portraits/char_1.png" });
-    expect(failed.project.characters[1].image).toMatchObject({ status: "failed" });
+    expect(failed.characters[0].image).toMatchObject({ status: "done", path: "portraits/char_1_run_3.png" });
+    expect(failed.characters[1].image).toMatchObject({ status: "failed" });
 
-    const retried = await service.retryStep({ projectId: project.id, userEmail, step: "PORTRAITS" });
+    const retryStarted = await service.retryStep({ projectId: project.id, userEmail, step: "PORTRAITS" });
+    const retried = await waitForProject(service, project.id, (stored) => stored.status === "PORTRAITS_DONE");
 
-    expect(retried.project.status).toBe("PORTRAITS_DONE");
-    expect(retried.project.characters.every((character) => character.image.status === "done")).toBe(true);
+    expect(retryStarted).toMatchObject({ type: "running" });
+    expect(retried.characters.every((character) => character.image.status === "done")).toBe(true);
     expect(client.calls.filter((call) => call.method === "generatePortrait" && call.input.character.id === "char_1"))
       .toHaveLength(1);
     expect(client.calls.filter((call) => call.method === "generatePortrait" && call.input.character.id === "char_2"))
       .toHaveLength(2);
+  });
+
+  it("stops a superseded image run before making another expensive image call", async () => {
+    let projectId;
+    let portraitCalls = 0;
+    const client = createFakeGeminiClient();
+    client.generatePortrait = async ({ character }) => {
+      portraitCalls += 1;
+      if (character.id === "char_1") {
+        await storage.updateProject(projectId, (project) => ({
+          ...project,
+          stepState: runningState("PORTRAITS", "run_new")
+        }));
+      }
+      return { bytes: Buffer.from(`portrait ${character.id}`) };
+    };
+    const service = createService(client);
+    const project = await createProject();
+    projectId = project.id;
+    await runAndWait(service, { projectId, userEmail, step: "STYLE" });
+    await runAndWait(service, { projectId, userEmail, step: "CHARACTERS" });
+
+    await service.runStep({ projectId, userEmail, step: "PORTRAITS" });
+    await delay(80);
+
+    expect(portraitCalls).toBe(1);
+    await expect(storage.readProject(projectId)).resolves.toMatchObject({
+      status: "CHARACTERS_DONE",
+      stepState: { status: "running", runId: "run_new" }
+    });
+  });
+
+  it("does not let stale image results overwrite a newer retry file path", async () => {
+    const deferred = createDeferred();
+    const service = createService({
+      ensureBookContext: async () => ({ fileUri: "files/fake-book", bookInteractionId: "fake-book" }),
+      generatePortrait: async () => {
+        await deferred.promise;
+        return { bytes: Buffer.from("old portrait") };
+      }
+    });
+    const project = await createProject();
+    await storage.updateProject(project.id, (current) => ({
+      ...current,
+      status: "CHARACTERS_DONE",
+      characters: [
+        {
+          id: "char_1",
+          name: "Mole",
+          prompt: "Mole prompt",
+          image: { status: "pending", path: null, error: null }
+        }
+      ],
+      stepState: idleState()
+    }));
+
+    await service.runStep({ projectId: project.id, userEmail, step: "PORTRAITS" });
+    await waitForProject(service, project.id, (stored) => stored.characters[0].image.status === "running");
+    await storage.updateProject(project.id, (current) => ({
+      ...current,
+      stepState: runningState("PORTRAITS", "run_new"),
+      characters: [
+        {
+          ...current.characters[0],
+          image: { status: "done", path: "portraits/char_1_run_new.png", error: null }
+        }
+      ]
+    }));
+
+    deferred.resolve();
+    await delay(40);
+
+    await expect(storage.readProject(project.id)).resolves.toMatchObject({
+      characters: [{ image: { status: "done", path: "portraits/char_1_run_new.png" } }]
+    });
+  });
+
+  it("calls ensureBookContext once and reuses persisted context", async () => {
+    const client = createFakeGeminiClient();
+    const service = createService(client);
+    const project = await createProject();
+
+    await runAndWait(service, { projectId: project.id, userEmail, step: "STYLE" });
+    await runAndWait(service, { projectId: project.id, userEmail, step: "CHARACTERS" });
+
+    const stored = await storage.readProject(project.id);
+    expect(client.count("ensureBookContext")).toBe(1);
+    expect(stored.gemini).toMatchObject({
+      fileUri: "files/fake-book",
+      bookInteractionId: "fake-book-interaction"
+    });
   });
 
   it("fails oversized character output instead of truncating", async () => {
@@ -258,15 +354,17 @@ describe("PipelineService", () => {
       })
     );
     const project = await createProject();
-    await service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
+    await runAndWait(service, { projectId: project.id, userEmail, step: "STYLE" });
 
-    const result = await service.runStep({ projectId: project.id, userEmail, step: "CHARACTERS" });
+    const result = await runAndWait(service, { projectId: project.id, userEmail, step: "CHARACTERS" }, (stored) =>
+      stored.stepState.status === "failed"
+    );
 
     expect(result).toMatchObject({
-      type: "failed",
-      project: { status: "STYLE_DONE", stepState: { status: "failed", step: "CHARACTERS" } }
+      status: "STYLE_DONE",
+      stepState: { status: "failed", step: "CHARACTERS" }
     });
-    expect(result.project.characters).toEqual([]);
+    expect(result.characters).toEqual([]);
   });
 
   it("fails oversized chapter output instead of truncating", async () => {
@@ -279,17 +377,19 @@ describe("PipelineService", () => {
       })
     );
     const project = await createProject();
-    await service.runStep({ projectId: project.id, userEmail, step: "STYLE" });
-    await service.runStep({ projectId: project.id, userEmail, step: "CHARACTERS" });
-    await service.runStep({ projectId: project.id, userEmail, step: "PORTRAITS" });
+    await runAndWait(service, { projectId: project.id, userEmail, step: "STYLE" });
+    await runAndWait(service, { projectId: project.id, userEmail, step: "CHARACTERS" });
+    await runAndWait(service, { projectId: project.id, userEmail, step: "PORTRAITS" });
 
-    const result = await service.runStep({ projectId: project.id, userEmail, step: "CHAPTERS" });
+    const result = await runAndWait(service, { projectId: project.id, userEmail, step: "CHAPTERS" }, (stored) =>
+      stored.stepState.status === "failed"
+    );
 
     expect(result).toMatchObject({
-      type: "failed",
-      project: { status: "PORTRAITS_DONE", stepState: { status: "failed", step: "CHAPTERS" } }
+      status: "PORTRAITS_DONE",
+      stepState: { status: "failed", step: "CHAPTERS" }
     });
-    expect(result.project.chapters).toEqual([]);
+    expect(result.chapters).toEqual([]);
   });
 });
 
@@ -299,11 +399,11 @@ function createService(client) {
     geminiClient: client,
     now: () => now,
     staleTimeouts: {
-      STYLE: 10,
-      CHARACTERS: 10,
-      PORTRAITS: 10,
-      CHAPTERS: 10,
-      ILLUSTRATIONS: 10
+      STYLE: 60_000,
+      CHARACTERS: 60_000,
+      PORTRAITS: 60_000,
+      CHAPTERS: 60_000,
+      ILLUSTRATIONS: 60_000
     },
     runIdFactory: () => `run_${++runCounter}`
   });
@@ -318,12 +418,51 @@ async function createProject() {
   });
 }
 
+async function runAndWait(service, args, isDone = (stored) => stored.stepState.status !== "running") {
+  const started = await service.runStep(args);
+  expect(started).toMatchObject({ type: "running", project: { stepState: { status: "running" } } });
+  return waitForProject(service, args.projectId, isDone);
+}
+
+async function waitForProject(service, projectId, predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const project = service.viewProject(await storage.readProject(projectId));
+    if (predicate(project)) {
+      return project;
+    }
+    await delay(10);
+  }
+
+  throw new Error("Timed out waiting for project state");
+}
+
+async function waitForCondition(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await delay(10);
+  }
+
+  throw new Error("Timed out waiting for condition");
+}
+
 function runningState(step, runId, startedAt = "2026-08-19T06:00:00.000Z") {
   return {
     status: "running",
     step,
     runId,
     startedAt,
+    error: null
+  };
+}
+
+function idleState() {
+  return {
+    status: "idle",
+    step: null,
+    runId: null,
+    startedAt: null,
     error: null
   };
 }
@@ -339,15 +478,8 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
-async function waitFor(predicate) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (await predicate()) {
-      return;
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 5);
-    });
-  }
-
-  throw new Error("Timed out waiting for condition");
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

@@ -22,7 +22,16 @@ afterEach(async () => {
 });
 
 describe("pipeline routes", () => {
-  it("runs the current step for the signed-in project owner", async () => {
+  it("returns running immediately for a newly claimed run", async () => {
+    const deferred = createDeferred();
+    client = {
+      ensureBookContext: async () => ({ fileUri: "files/fake-book", bookInteractionId: "fake-book" }),
+      generateStyle: async () => {
+        await deferred.promise;
+        return { style: "ink wash", gemini: {} };
+      }
+    };
+    app = createApp({ storage, sessionSecret: "test-secret", geminiClient: client });
     const agent = request.agent(app);
     const projectId = await signInAndCreateProject(agent);
 
@@ -30,9 +39,59 @@ describe("pipeline routes", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
-      type: "completed",
-      project: { status: "STYLE_DONE", currentStep: "CHARACTERS" }
+      type: "running",
+      project: { status: "CREATED", stepState: { status: "running", step: "STYLE" } }
     });
+
+    deferred.resolve();
+    await expect(waitForDetail(agent, projectId, (project) => project.status === "STYLE_DONE")).resolves.toMatchObject({
+      status: "STYLE_DONE"
+    });
+  });
+
+  it("polling project detail later sees failed state", async () => {
+    client = createFakeGeminiClient({ failures: { generateStyle: "style failed" } });
+    app = createApp({ storage, sessionSecret: "test-secret", geminiClient: client });
+    const agent = request.agent(app);
+    const projectId = await signInAndCreateProject(agent);
+
+    const response = await agent.post(`/api/projects/${projectId}/steps/STYLE/run`).send({});
+    const detail = await waitForDetail(agent, projectId, (project) => project.stepState.status === "failed");
+
+    expect(response.body.type).toBe("running");
+    expect(detail).toMatchObject({
+      status: "CREATED",
+      stepState: { status: "failed", step: "STYLE", error: { message: "style failed" } }
+    });
+  });
+
+  it("duplicate run during async execution makes one fake Gemini call", async () => {
+    const deferred = createDeferred();
+    let generateStyleCalls = 0;
+    client = {
+      ensureBookContext: async () => ({ fileUri: "files/fake-book", bookInteractionId: "fake-book" }),
+      generateStyle: async () => {
+        generateStyleCalls += 1;
+        await deferred.promise;
+        return { style: "ink wash", gemini: {} };
+      }
+    };
+    app = createApp({ storage, sessionSecret: "test-secret", geminiClient: client });
+    const agent = request.agent(app);
+    const projectId = await signInAndCreateProject(agent);
+
+    const first = await agent.post(`/api/projects/${projectId}/steps/STYLE/run`).send({});
+    const second = await agent.post(`/api/projects/${projectId}/steps/STYLE/run`).send({});
+
+    expect(first.status).toBe(200);
+    expect(first.body.type).toBe("running");
+    expect(second.status).toBe(202);
+    expect(second.body).toMatchObject({ type: "already_running", project: { stepState: { status: "running" } } });
+    await waitForCondition(() => generateStyleCalls === 1);
+    expect(generateStyleCalls).toBe(1);
+
+    deferred.resolve();
+    await waitForDetail(agent, projectId, (project) => project.status === "STYLE_DONE");
   });
 
   it("returns 404 for another user's project", async () => {
@@ -85,7 +144,10 @@ describe("pipeline routes", () => {
     expect(run.status).toBe(409);
     expect(run.body.error.message).toBe("This step must be retried explicitly.");
     expect(retry.status).toBe(200);
-    expect(retry.body).toMatchObject({ type: "completed", project: { status: "STYLE_DONE" } });
+    expect(retry.body).toMatchObject({ type: "running", project: { stepState: { status: "running" } } });
+    await expect(waitForDetail(staleAgent, projectId, (project) => project.status === "STYLE_DONE")).resolves.toMatchObject({
+      status: "STYLE_DONE"
+    });
   });
 
   it("requires a valid session", async () => {
@@ -104,4 +166,44 @@ async function signInAndCreateProject(agent) {
     bookText: "The Mole had been working very hard all the morning."
   });
   return created.body.project.id;
+}
+
+async function waitForDetail(agent, projectId, predicate) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const response = await agent.get(`/api/projects/${projectId}`);
+    if (response.status === 200 && predicate(response.body.project)) {
+      return response.body.project;
+    }
+    await delay(5);
+  }
+
+  throw new Error("Timed out waiting for project detail");
+}
+
+async function waitForCondition(predicate) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await delay(5);
+  }
+
+  throw new Error("Timed out waiting for condition");
+}
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, resolve, reject };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

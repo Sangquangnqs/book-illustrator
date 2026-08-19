@@ -17,9 +17,32 @@ export async function writeJsonAtomic(filePath, value) {
 
   try {
     await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await rename(tempPath, filePath);
+    await renameWithRetry(tempPath, filePath);
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => {});
     throw error;
   }
+}
+
+async function renameWithRetry(from, to) {
+  const maxAttempts = 20;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (error) {
+      if (!["EPERM", "EACCES"].includes(error.code) || attempt === maxAttempts) {
+        throw error;
+      }
+
+      await delay(25 * attempt);
+    }
+  }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

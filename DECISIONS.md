@@ -24,6 +24,18 @@ The assessment allows either REST or an official SDK. The earlier architecture l
 
 The first architecture draft said the backend could cap oversized Gemini responses after parsing. We questioned whether silently slicing results was the right behavior for hard assessment limits. We decided to enforce the 2-character and 1-chapter caps in three places: the prompt, the structured-output schema using array limits, and backend validation. If Gemini still returns an invalid shape or too many items, the step fails and can be retried by the user. The trade-off is that a step may fail even when we could have salvaged part of the output, but it keeps the contract explicit and avoids quietly dropping generated content.
 
+## Guard expensive side effects with `runId`
+
+The first Milestone 4 implementation used `runId` to stop stale completions from overwriting `project.json`, and the tests passed. During review I noticed that a superseded image run could still keep making Gemini image calls, and could write image bytes before the state guard rejected its completion. We changed image runs to check the current `runId` before each expensive image call, check again after Gemini returns and before writing bytes, stop benignly when superseded, and use run-specific image filenames. The trade-off is that rare superseded runs may leave orphaned files, but cleanup can wait because correctness and quota protection matter more here.
+
+## Return `running` immediately from pipeline actions
+
+The first Milestone 4 implementation kept the `/run` request open until fake Gemini completed. I pushed back because our agreed contract was that `/run` and `/retry` persist the running state, return immediately, and let the frontend poll project detail. We changed to in-process async execution after the step is safely claimed and written. That means long Gemini calls do not depend on one open HTTP request, refreshes naturally read persisted progress, duplicate requests see the already-running state, and a crash falls back to stale-step recovery. We deliberately did not add a queue, worker system, automatic retries, SSE, or WebSockets.
+
+## Preserve atomic JSON replacement
+
+Async Milestone 4 execution plus polling exposed transient Windows `EPERM` / `EACCES` failures during temp-file rename. An initial fix added a `copyFile(temp, target)` fallback. During review I rejected that because it weakened the atomic-write guarantee behind the JSON storage choice: a crash during copy could leave `project.json` partially overwritten. We kept bounded retries around `rename()` for transient Windows contention, kept temp-file plus rename as the replacement path, and decided that if retries are exhausted the write should fail while preserving the previous valid target. We are not serializing every read and write unless rename retry proves insufficient.
+
 ## If I had one more day
 
 I would add a small visible attempt history for each step. It would make retries and failures easier to explain during review without changing the core architecture.

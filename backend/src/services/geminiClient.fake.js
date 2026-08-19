@@ -28,6 +28,12 @@ export function createFakeGeminiClient(options = {}) {
     count(method) {
       return calls.filter((callEntry) => callEntry.method === method).length;
     },
+    ensureBookContext(input) {
+      return call("ensureBookContext", input, () => ({
+        fileUri: options.fileUri ?? "files/fake-book",
+        bookInteractionId: options.bookInteractionId ?? "fake-book-interaction"
+      }));
+    },
     generateStyle(input) {
       return call("generateStyle", input, () => ({
         style: options.style ?? "warm watercolor storybook style",

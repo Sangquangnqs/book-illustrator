@@ -42,6 +42,13 @@ export class PipelineError extends Error {
   }
 }
 
+class SupersededRunError extends Error {
+  constructor() {
+    super("Pipeline run was superseded.");
+    this.code = "RUN_SUPERSEDED";
+  }
+}
+
 export class PipelineService {
   constructor({
     storage,
@@ -64,12 +71,14 @@ export class PipelineService {
       return claim;
     }
 
-    return this.#executeClaimedStep({ projectId, step, runId: claim.runId, input });
+    this.#startClaimedStep({ projectId, step, runId: claim.runId, input });
+    return { type: "running", project: claim.project };
   }
 
   async retryStep({ projectId, userEmail, step, input = {} }) {
     const claim = await this.#claimStep({ projectId, userEmail, step, mode: "retry" });
-    return this.#executeClaimedStep({ projectId, step, runId: claim.runId, input });
+    this.#startClaimedStep({ projectId, step, runId: claim.runId, input });
+    return { type: "running", project: claim.project };
   }
 
   viewProject(project) {
@@ -142,6 +151,10 @@ export class PipelineService {
     return { ...claim, project: this.viewProject(project) };
   }
 
+  #startClaimedStep({ projectId, step, runId, input }) {
+    void this.#executeClaimedStep({ projectId, step, runId, input }).catch(() => {});
+  }
+
   async #executeClaimedStep({ projectId, step, runId, input }) {
     try {
       let project;
@@ -151,10 +164,12 @@ export class PipelineService {
         let gemini = {};
 
         if (!style) {
+          const projectWithContext = await this.#ensureBookContext(projectId, runId);
           const result = await this.geminiClient.generateStyle({
-            project: await this.storage.readProject(projectId),
+            project: projectWithContext,
             bookText: await this.storage.readBookText(projectId)
           });
+          await this.#requireCurrentRun(projectId, runId);
           style = z.string().trim().min(1).parse(result.style);
           gemini = result.gemini;
         }
@@ -167,9 +182,11 @@ export class PipelineService {
           style
         }));
       } else if (step === "CHARACTERS") {
+        const projectWithContext = await this.#ensureBookContext(projectId, runId);
         const result = await this.geminiClient.generateCharacters({
-          project: await this.storage.readProject(projectId)
+          project: projectWithContext
         });
+        await this.#requireCurrentRun(projectId, runId);
         const characters = characterOutputSchema.parse(result.characters).map((character, index) => ({
           id: `char_${index + 1}`,
           name: character.name,
@@ -189,13 +206,14 @@ export class PipelineService {
           characters
         }));
       } else if (step === "PORTRAITS") {
+        await this.#ensureBookContext(projectId, runId);
         await this.#generateImages({
           projectId,
           runId,
           step,
           listKey: "characters",
           kind: "portraits",
-          fileNameFor: (item) => `${item.id}.png`,
+          fileNameFor: (item, currentRunId) => `${item.id}_${currentRunId}.png`,
           generate: (current, item) =>
             this.geminiClient.generatePortrait({
               project: current,
@@ -209,9 +227,11 @@ export class PipelineService {
           stepState: idleStepState
         }));
       } else if (step === "CHAPTERS") {
+        const projectWithContext = await this.#ensureBookContext(projectId, runId);
         const result = await this.geminiClient.generateChapters({
-          project: await this.storage.readProject(projectId)
+          project: projectWithContext
         });
+        await this.#requireCurrentRun(projectId, runId);
         const chapters = chapterOutputSchema.parse(result.chapters).map((chapter, index) => ({
           id: `chapter_${index + 1}`,
           name: chapter.name,
@@ -231,13 +251,14 @@ export class PipelineService {
           chapters
         }));
       } else if (step === "ILLUSTRATIONS") {
+        await this.#ensureBookContext(projectId, runId);
         await this.#generateImages({
           projectId,
           runId,
           step,
           listKey: "chapters",
           kind: "chapters",
-          fileNameFor: (item) => `${item.id}.png`,
+          fileNameFor: (item, currentRunId) => `${item.id}_${currentRunId}.png`,
           generate: (current, item) =>
             this.geminiClient.generateIllustration({
               project: current,
@@ -254,13 +275,56 @@ export class PipelineService {
 
       return { type: "completed", project: this.viewProject(project) };
     } catch (error) {
+      if (error instanceof SupersededRunError) {
+        return { type: "superseded" };
+      }
+
       const project = await this.#completeFailure(projectId, runId, step, error);
       return { type: "failed", project: this.viewProject(project) };
     }
   }
 
+  async #ensureBookContext(projectId, runId) {
+    const current = await this.#requireCurrentRun(projectId, runId);
+
+    if (current.gemini.fileUri && current.gemini.bookInteractionId) {
+      return current;
+    }
+
+    const result = await this.geminiClient.ensureBookContext({
+      project: current,
+      bookText: await this.storage.readBookText(projectId)
+    });
+
+    await this.#requireCurrentRun(projectId, runId);
+
+    const updated = await this.storage.updateProject(projectId, (project) => {
+      if (project.stepState.runId !== runId) {
+        return project;
+      }
+
+      if (project.gemini.fileUri && project.gemini.bookInteractionId) {
+        return project;
+      }
+
+      return {
+        ...project,
+        gemini: mergeGemini(project.gemini, {
+          fileUri: result.fileUri,
+          bookInteractionId: result.bookInteractionId
+        })
+      };
+    });
+
+    if (updated.stepState.runId !== runId) {
+      throw new SupersededRunError();
+    }
+
+    return updated;
+  }
+
   async #generateImages({ projectId, runId, step, listKey, kind, fileNameFor, generate }) {
-    let current = await this.storage.readProject(projectId);
+    let current = await this.#requireCurrentRun(projectId, runId);
 
     for (const item of current[listKey]) {
       if (item.image?.status === "done" && item.image.path) {
@@ -273,14 +337,20 @@ export class PipelineService {
         error: null
       });
 
+      if (current.stepState.runId !== runId) {
+        throw new SupersededRunError();
+      }
+
       const latestItem = current[listKey].find((candidate) => candidate.id === item.id);
 
       try {
+        await this.#requireCurrentRun(projectId, runId);
         const result = await generate(current, latestItem);
+        await this.#requireCurrentRun(projectId, runId);
         const path = await this.storage.writeProjectImage(
           projectId,
           kind,
-          fileNameFor(latestItem),
+          fileNameFor(latestItem, runId),
           normalizeImageBytes(result)
         );
 
@@ -351,6 +421,16 @@ export class PipelineService {
         }
       };
     });
+  }
+
+  async #requireCurrentRun(projectId, runId) {
+    const project = await this.storage.readProject(projectId);
+
+    if (project.stepState.runId !== runId) {
+      throw new SupersededRunError();
+    }
+
+    return project;
   }
 }
 
