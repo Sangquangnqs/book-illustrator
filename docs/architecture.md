@@ -11,7 +11,7 @@ flowchart LR
   User[User] --> FE[React + Vite frontend]
   FE -->|REST API| BE[Node + Express backend]
   BE -->|read/write JSON, text, images| Store[(Local filesystem storage)]
-  BE -->|Gemini REST or SDK calls| Gemini[Gemini API]
+  BE -->|official JS SDK| Gemini[Gemini API]
   BE -->|image/text URLs + project state| FE
 ```
 
@@ -119,7 +119,6 @@ Use one `project.json` per project. Keep a simple top-level `status` for list vi
     "step": null,
     "runId": null,
     "startedAt": null,
-    "heartbeatAt": null,
     "error": null
   },
   "gemini": {
@@ -146,7 +145,7 @@ Recommended step states:
 - `idle`: next step can run.
 - `running`: a specific step is in progress.
 - `failed`: that exact step can be retried.
-- `stale`: derived at read time when a running step has exceeded the configured timeout.
+- `stale`: derived at read time when a running step's `startedAt` is older than that step's conservative timeout.
 
 For image steps, store per-item progress so portraits and illustrations can land one at a time:
 
@@ -203,7 +202,7 @@ Polling is enough for the base assessment. SSE or WebSockets would be a bonus, n
 
 ## Gemini Integration Flow
 
-Use `GEMINI_API_KEY` from the environment and keep a `.env.example` with variable names only.
+Use the official `@google/genai` JavaScript SDK behind a small backend wrapper, pinned to an explicit package version. Use `GEMINI_API_KEY` from the environment and keep a `.env.example` with variable names only. SDK-specific code should stay inside the wrapper so the rest of the backend works with app-level methods like `generateStyle`, `generateCharacters`, and `generatePortrait`.
 
 Before the first Gemini step, the backend saves the book locally, uploads it through Gemini's File API, creates a reusable book context or interaction, and persists the returned identifiers.
 
@@ -214,9 +213,10 @@ Step 1, Style:
 
 Step 2, Characters:
 
-- Ask for main adult characters only.
-- Request structured JSON with `{ name, prompt }`.
-- Parse, validate, and cap to 2 characters on the server.
+- Ask for main adult characters only, with a max of 2.
+- Request structured JSON with `{ name, prompt }` and an array schema using `maxItems: 2`.
+- Parse and validate the response on the server.
+- Fail the step if Gemini returns more than 2 characters or an invalid shape.
 - Persist the character list.
 
 Step 3, Portraits:
@@ -226,9 +226,10 @@ Step 3, Portraits:
 
 Step 4, Chapters:
 
-- Ask for chapter illustration prompts that reference the characters.
-- Request structured JSON with `{ name, prompt }`.
-- Parse, validate, and cap to 1 chapter on the server.
+- Ask for chapter illustration prompts that reference the characters, with a max of 1.
+- Request structured JSON with `{ name, prompt }` and an array schema using `maxItems: 1`.
+- Parse and validate the response on the server.
+- Fail the step if Gemini returns more than 1 chapter or an invalid shape.
 - Persist the chapter list.
 
 Step 5, Illustrations:
@@ -246,7 +247,7 @@ The backend performs an atomic "claim step" before every Gemini call:
 4. Verify the requested step is exactly the next allowed step.
 5. If the same step is already running and not stale, return the existing running state.
 6. If failed or stale, require explicit retry.
-7. Set `stepState` to `running` with `step`, `runId`, `startedAt`, and `heartbeatAt`.
+7. Set `stepState` to `running` with `step`, `runId`, and `startedAt`.
 8. Atomically write `project.json`.
 9. Release the mutex, then call Gemini.
 
@@ -266,12 +267,12 @@ If Gemini returns an error, parsing fails, an image is missing, or a file write 
 
 For stuck work after server restart:
 
-- A running step with an old `heartbeatAt` is treated as stale.
+- A running step with an old `startedAt` is treated as stale.
 - The project detail API returns a stale state with a retry action.
 - Retrying creates a new `runId`.
 - Old completion handlers must check `runId` before writing final state.
 
-Use a conservative stale timeout, such as 10 minutes for text steps and 20 minutes for image steps. The demo's 8-second timeout is only for fake localStorage timers and is too short for real Gemini calls.
+Use conservative per-step stale timeouts, such as 10 minutes for text steps and 20 minutes for image steps. The demo's 8-second timeout is only for fake localStorage timers and is too short for real Gemini calls.
 
 ## Assumptions
 
@@ -279,5 +280,5 @@ Use a conservative stale timeout, such as 10 minutes for text steps and 20 minut
 - A server crash cannot continue an HTTP request that died mid-call; the app only needs to detect and recover, not resume the exact network call.
 - The Gemini File API object remains valid long enough for the assessment review. If it expires, the retry path can re-upload `book.txt` and refresh `fileUri`.
 - Polling project detail during running steps is acceptable.
-- The server may cap Gemini's returned arrays after parsing, but prompts should also ask for the cap to reduce waste.
+- Gemini structured output supports enough JSON Schema array constraints for `maxItems` to be part of the request, but the backend still validates the response before saving it.
 - Local JSON storage is acceptable if writes are atomic and isolated per project.
