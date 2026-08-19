@@ -8,6 +8,10 @@ The first architecture draft included both `startedAt` and `heartbeatAt` for run
 
 The initial idea was to use local JSON/file-based storage. We compared that against SQLite because SQLite would provide stronger write safety and transactions. We decided to keep per-project JSON because the app is local, single-process, small in scope, and the stored data is naturally project-shaped. To reduce the risk, all project writes will go through a small storage helper with a per-project mutex and atomic temp-file rename. The trade-off is that JSON gives us less built-in protection than SQLite, so our storage helper has to be boring and correct.
 
+## Serialize shared `users.json` writes too
+
+The first Milestone 2 implementation protected per-project `project.json` updates with a mutex. During review I noticed that `users.json` is also shared mutable state, and its read-modify-write path was not serialized. Atomic writes prevent partial or corrupt files, but they do not prevent one overlapping update from overwriting another. We changed the storage design to serialize `users.json` mutations with a small shared queue. The regression test for concurrent project creation also exposed an initialization race, so `ensureReady()` is now guarded with a shared promise. Cost: a little more coordination code in storage, but it keeps the JSON approach safe enough for this local single-process app.
+
 ## Use the official Gemini JavaScript SDK behind a wrapper
 
 The assessment allows either REST or an official SDK. The earlier architecture left that open. We checked the current Gemini docs and the notebook behavior, then decided to use the official `@google/genai` JavaScript SDK because it maps closely to the notebook concepts: file upload, structured output, interactions/context chaining, and image generation. We will pin the SDK version and keep SDK-specific code inside a small `geminiClient` wrapper. The trade-off is relying on SDK behavior instead of raw HTTP transparency, but the wrapper gives us a contained place to debug or swap approaches if needed.

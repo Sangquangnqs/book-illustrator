@@ -21,6 +21,8 @@ export class ProjectStorage {
 
     this.dataDir = dataDir;
     this.mutex = mutex;
+    this.usersTail = Promise.resolve();
+    this.readyPromise = null;
   }
 
   get usersPath() {
@@ -40,6 +42,17 @@ export class ProjectStorage {
   }
 
   async ensureReady() {
+    this.readyPromise = this.readyPromise ?? this.#ensureReady();
+
+    try {
+      await this.readyPromise;
+    } catch (error) {
+      this.readyPromise = null;
+      throw error;
+    }
+  }
+
+  async #ensureReady() {
     await mkdir(path.join(this.dataDir, PROJECTS_DIR), { recursive: true });
 
     try {
@@ -58,19 +71,21 @@ export class ProjectStorage {
   }
 
   async createUser({ name, email }) {
-    await this.ensureReady();
-    const normalizedEmail = normalizeEmail(email);
-    const usersState = await readJson(this.usersPath);
+    return this.updateUsers(async (usersState) => {
+      const normalizedEmail = normalizeEmail(email);
 
-    usersState.users[normalizedEmail] = usersState.users[normalizedEmail] ?? {
-      name,
-      email: normalizedEmail,
-      projectIds: []
-    };
-    usersState.users[normalizedEmail].name = name;
+      usersState.users[normalizedEmail] = usersState.users[normalizedEmail] ?? {
+        name,
+        email: normalizedEmail,
+        projectIds: []
+      };
+      usersState.users[normalizedEmail].name = name;
 
-    await writeJsonAtomic(this.usersPath, usersState);
-    return usersState.users[normalizedEmail];
+      return {
+        usersState,
+        result: usersState.users[normalizedEmail]
+      };
+    });
   }
 
   async createProject({ userEmail, title, bookText, id = `project_${randomUUID()}` }) {
@@ -88,16 +103,18 @@ export class ProjectStorage {
     await writeJsonAtomic(this.projectPath(id), project);
     await writeFileUtf8(this.bookPath(id), bookText);
 
-    const usersState = await readJson(this.usersPath);
-    usersState.users[normalizedEmail] = usersState.users[normalizedEmail] ?? {
-      name: "",
-      email: normalizedEmail,
-      projectIds: []
-    };
-    if (!usersState.users[normalizedEmail].projectIds.includes(id)) {
-      usersState.users[normalizedEmail].projectIds.unshift(id);
-    }
-    await writeJsonAtomic(this.usersPath, usersState);
+    await this.updateUsers(async (usersState) => {
+      usersState.users[normalizedEmail] = usersState.users[normalizedEmail] ?? {
+        name: "",
+        email: normalizedEmail,
+        projectIds: []
+      };
+      if (!usersState.users[normalizedEmail].projectIds.includes(id)) {
+        usersState.users[normalizedEmail].projectIds.unshift(id);
+      }
+
+      return { usersState };
+    });
 
     return project;
   }
@@ -118,13 +135,36 @@ export class ProjectStorage {
       const parsed = parseProject(
         withDerivedCurrentStep({
           ...updated,
-          updatedAt: updated.updatedAt ?? new Date().toISOString()
+          updatedAt: new Date().toISOString()
         })
       );
 
       await writeJsonAtomic(this.projectPath(projectId), parsed);
       return parsed;
     });
+  }
+
+  async updateUsers(updater) {
+    const previous = this.usersTail;
+
+    let release;
+    this.usersTail = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    await previous.catch(() => {});
+
+    try {
+      await this.ensureReady();
+      const usersState = await readJson(this.usersPath);
+      const update = await updater(usersState);
+      const nextUsersState = update?.usersState ?? usersState;
+
+      await writeJsonAtomic(this.usersPath, nextUsersState);
+      return update?.result;
+    } finally {
+      release();
+    }
   }
 }
 

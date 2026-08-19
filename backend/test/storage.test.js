@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectStorage } from "../src/storage/projectStorage.js";
 import { writeJsonAtomic } from "../src/storage/jsonFile.js";
 import { createTempDataDir } from "./helpers/tempDataDir.js";
@@ -121,6 +121,54 @@ describe("ProjectStorage", () => {
     await expect(storage.readProject("project_1")).resolves.toMatchObject({
       title: "First update then second update"
     });
+  });
+
+  it("serializes shared users.json updates when projects are created concurrently", async () => {
+    const storage = new ProjectStorage({ dataDir: temp.dataDir });
+    const projectIds = Array.from({ length: 20 }, (_, index) => `project_${index}`);
+
+    await Promise.all(
+      projectIds.map((id) =>
+        storage.createProject({
+          id,
+          userEmail: "mira@example.com",
+          title: `Book ${id}`,
+          bookText: "Book text"
+        })
+      )
+    );
+
+    const usersState = await storage.readUsers();
+
+    expect(usersState.users["mira@example.com"].projectIds).toHaveLength(projectIds.length);
+    expect(new Set(usersState.users["mira@example.com"].projectIds)).toEqual(new Set(projectIds));
+  });
+
+  it("writes a fresh updatedAt for successful project mutations", async () => {
+    const storage = new ProjectStorage({ dataDir: temp.dataDir });
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-08-19T06:00:00.000Z"));
+      const created = await storage.createProject({
+        id: "project_1",
+        userEmail: "mira@example.com",
+        title: "Initial",
+        bookText: "Book text"
+      });
+
+      vi.setSystemTime(new Date("2026-08-19T06:05:00.000Z"));
+      const updated = await storage.updateProject("project_1", (project) => ({
+        ...project,
+        title: "Updated"
+      }));
+
+      expect(updated.createdAt).toBe(created.createdAt);
+      expect(updated.updatedAt).toBe("2026-08-19T06:05:00.000Z");
+      expect(updated.updatedAt).not.toBe(created.updatedAt);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects invalid project state from disk", async () => {
