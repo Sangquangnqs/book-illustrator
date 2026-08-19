@@ -27,6 +27,19 @@ End to end, the flow is:
 
 This keeps the app small while still satisfying the important requirements: resumability, no duplicate Gemini calls, server-side caps, retryable failures, and durable generated results.
 
+## Tech Stack
+
+- React + Vite: fast local frontend setup for the required screens and component tests.
+- Plain CSS: enough to match or improve the provided demo without adding a UI framework.
+- Node.js + Express: small REST backend for sessions, projects, file serving, and pipeline actions.
+- Zod: validation for request bodies, persisted project shape, and Gemini structured-output responses.
+- Multer: simple `.txt` upload handling for new projects.
+- Node `fs/promises` and `path`: local JSON, book text, and image persistence without a database.
+- Small in-process project mutex: prevents overlapping writes and duplicate step claims in this single-process app.
+- `@google/genai`: official Gemini JavaScript SDK for file upload, structured output, interaction chaining, and image generation, isolated behind a backend wrapper.
+- Vitest, Supertest, React Testing Library, and jsdom: focused backend and frontend tests required by the assessment.
+- dotenv and a root start helper: local environment variables and one-command startup.
+
 ## Pipeline Flow
 
 The pipeline follows the first five steps of Google's book illustration notebook. Each step is user-triggered. The backend enforces order and never auto-runs the next step.
