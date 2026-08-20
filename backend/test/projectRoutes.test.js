@@ -68,6 +68,21 @@ describe("project routes", () => {
     });
   });
 
+  it("shows existing projects after signing in again with the same email", async () => {
+    const firstSession = request.agent(app);
+    const secondSession = request.agent(app);
+
+    await firstSession.post("/api/session").send({ name: "Mira", email: "Mira@Example.com" });
+    await firstSession.post("/api/projects").send({ title: "Saved Book", bookText: "Saved text" });
+    await secondSession.post("/api/session").send({ name: "Mira Again", email: "mira@example.com" });
+
+    const response = await secondSession.get("/api/projects");
+
+    expect(response.status).toBe(200);
+    expect(response.body.projects).toHaveLength(1);
+    expect(response.body.projects[0].title).toBe("Saved Book");
+  });
+
   it("creates a project from pasted book text", async () => {
     const agent = request.agent(app);
     await agent.post("/api/session").send({ name: "Mira", email: "mira@example.com" });

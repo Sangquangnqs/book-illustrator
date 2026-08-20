@@ -1,0 +1,588 @@
+{
+  "info": {
+    "name": "Book Illustration Studio",
+    "_postman_id": "c67d15f0-7b18-4e62-8b59-8a6e3d535b43",
+    "description": "Local API collection for the Gradion Book Illustration Studio take-home project. Sign in first so Postman can store the signed HttpOnly session cookie automatically.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "projectId",
+      "value": ""
+    },
+    {
+      "key": "imageKind",
+      "value": "portraits"
+    },
+    {
+      "key": "imageFileName",
+      "value": "char_1_run_1.jpg"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Checks that the Express backend is reachable."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200', () => pm.response.to.have.status(200));",
+                  "pm.test('health payload is ok', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.ok).to.eql(true);",
+                  "  pm.expect(json.service).to.eql('book-illustrator-api');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Session",
+      "item": [
+        {
+          "name": "Sign in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Demo User\",\n  \"email\": \"demo@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/session",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "session"]
+            },
+            "description": "Creates or recognizes a lightweight user and lets Postman store the signed session cookie."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200', () => pm.response.to.have.status(200));",
+                  "pm.test('returns public user', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.user.email).to.be.a('string');",
+                  "  pm.expect(json.user.name).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Current session",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/session",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "session"]
+            },
+            "description": "Returns the signed-in user when the session cookie is present."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200 when signed in', () => pm.response.to.have.status(200));",
+                  "pm.test('has user', () => pm.expect(pm.response.json().user.email).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign out",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/session",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "session"]
+            },
+            "description": "Clears the local signed session cookie."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Projects",
+      "item": [
+        {
+          "name": "List projects",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/projects",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects"]
+            },
+            "description": "Lists projects owned by the current signed-in user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200', () => pm.response.to.have.status(200));",
+                  "pm.test('returns projects array', () => pm.expect(pm.response.json().projects).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create project from pasted text",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Postman Smoke Book\",\n  \"bookText\": \"The Mole had been working very hard all the morning, spring-cleaning his little home. The sun was warm and the river waited beyond the fields.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/projects",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects"]
+            },
+            "description": "Creates a project using pasted book text. The response test stores project.id in the collection variable projectId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 201', () => pm.response.to.have.status(201));",
+                  "pm.test('returns created project', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.project.id).to.match(/^project_[a-f0-9-]{36}$/);",
+                  "  pm.expect(json.project.currentStep).to.eql('STYLE');",
+                  "  pm.collectionVariables.set('projectId', json.project.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create project from .txt upload",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "title",
+                  "value": "Uploaded Text Book",
+                  "type": "text"
+                },
+                {
+                  "key": "bookFile",
+                  "type": "file",
+                  "src": "{{bookFilePath}}",
+                  "description": "Choose a local .txt file in Postman before sending."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/projects",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects"]
+            },
+            "description": "Creates a project using multipart/form-data. Field names must be title and bookFile."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 201 when a .txt file is selected', () => pm.response.to.have.status(201));",
+                  "pm.test('stores uploaded project id', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.project.id).to.match(/^project_[a-f0-9-]{36}$/);",
+                  "  pm.collectionVariables.set('projectId', json.project.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get project detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/{{projectId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "{{projectId}}"]
+            },
+            "description": "Loads project state including pipeline status, generated records, and Gemini metadata."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200', () => pm.response.to.have.status(200));",
+                  "pm.test('returns project detail', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.project.id).to.eql(pm.collectionVariables.get('projectId'));",
+                  "  pm.expect(json.project.stepState).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get project book text",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/{{projectId}}/book",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "{{projectId}}", "book"]
+            },
+            "description": "Returns the full persisted book text for the project."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200', () => pm.response.to.have.status(200));",
+                  "pm.test('returns book text', () => pm.expect(pm.response.json().bookText).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Pipeline",
+      "item": [
+        {
+          "name": "Run STYLE",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"style\": \"Warm watercolor storybook illustration\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/{{projectId}}/steps/STYLE/run",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "{{projectId}}", "steps", "STYLE", "run"]
+            },
+            "description": "Claims and starts the STYLE step. Returns running state immediately."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200 or already-running 202', () => pm.expect([200, 202]).to.include(pm.response.code));",
+                  "pm.test('returns pipeline result', () => pm.expect(pm.response.json().project.stepState).to.be.an('object'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run CHARACTERS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/{{projectId}}/steps/CHARACTERS/run",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "{{projectId}}", "steps", "CHARACTERS", "run"]
+            },
+            "description": "Starts character prompt generation when CHARACTERS is the current step."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200 or already-running 202', () => pm.expect([200, 202]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run PORTRAITS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/{{projectId}}/steps/PORTRAITS/run",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "{{projectId}}", "steps", "PORTRAITS", "run"]
+            },
+            "description": "Starts portrait image generation. This can call Gemini image generation when using the real client."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200 or already-running 202', () => pm.expect([200, 202]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run CHAPTERS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/{{projectId}}/steps/CHAPTERS/run",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "{{projectId}}", "steps", "CHAPTERS", "run"]
+            },
+            "description": "Starts chapter illustration prompt generation."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200 or already-running 202', () => pm.expect([200, 202]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run ILLUSTRATIONS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/{{projectId}}/steps/ILLUSTRATIONS/run",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "{{projectId}}", "steps", "ILLUSTRATIONS", "run"]
+            },
+            "description": "Starts the final chapter illustration step."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200 or already-running 202', () => pm.expect([200, 202]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retry STYLE",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/{{projectId}}/steps/STYLE/retry",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "{{projectId}}", "steps", "STYLE", "retry"]
+            },
+            "description": "Retries STYLE only when that step is failed or stale."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns 200 when retry is allowed, otherwise 409', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retry current failed or stale step",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/{{projectId}}/steps/{{step}}/retry",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "{{projectId}}", "steps", "{{step}}", "retry"]
+            },
+            "description": "Generic retry request. Set the collection/environment variable step to STYLE, CHARACTERS, PORTRAITS, CHAPTERS, or ILLUSTRATIONS."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns a pipeline response or conflict', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Assets",
+      "item": [
+        {
+          "name": "Get generated image",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/{{projectId}}/images/{{imageKind}}/{{imageFileName}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "{{projectId}}", "images", "{{imageKind}}", "{{imageFileName}}"]
+            },
+            "description": "Fetches a generated project image. Set imageKind to portraits or chapters and imageFileName to a persisted image file name."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns image or not found', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

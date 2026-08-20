@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRoutes } from "./App.jsx";
@@ -6,6 +6,7 @@ import { AppRoutes } from "./App.jsx";
 const user = { name: "Mira Hassan", email: "mira@example.com" };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -56,6 +57,33 @@ describe("frontend flow", () => {
     expect(screen.getByText("Give the project a title.")).toBeInTheDocument();
   });
 
+  it("creates a project from pasted text and opens the detail view", async () => {
+    const createdProject = detailProject({
+      id: "project_11111111-1111-4111-8111-111111111111",
+      title: "Created Book"
+    });
+    mockApi({ project: createdProject });
+    renderApp("/projects/new");
+
+    await screen.findByRole("heading", { name: "Start with the book text" });
+    fireEvent.change(screen.getByPlaceholderText("The Wind in the Willows"), {
+      target: { value: "Created Book" }
+    });
+    fireEvent.change(screen.getByPlaceholderText("Paste a few chapters or the complete text here..."), {
+      target: { value: "A short public-domain excerpt." }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    await screen.findByRole("heading", { name: "Created Book" });
+    const createCall = global.fetch.mock.calls.find(
+      ([url, options = {}]) => String(url).endsWith("/api/projects") && options.method === "POST"
+    );
+    expect(JSON.parse(createCall[1].body)).toEqual({
+      title: "Created Book",
+      bookText: "A short public-domain excerpt."
+    });
+  });
+
   it("shows the project detail current step and optional style action", async () => {
     mockApi({ project: detailProject({ status: "CREATED", currentStep: "STYLE" }) });
     renderApp("/projects/project_00000000-0000-4000-8000-000000000001");
@@ -78,6 +106,38 @@ describe("frontend flow", () => {
 
     expect(await screen.findByText(/Running Portraits/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Generating Portraits..." })).toBeDisabled();
+  });
+
+  it("polls project detail while a step is running and renders completion", async () => {
+    const runningProject = detailProject({
+      status: "CHAPTERS_DONE",
+      currentStep: "ILLUSTRATIONS",
+      stepState: runningState("ILLUSTRATIONS")
+    });
+    const completedProject = detailProject({
+      status: "DONE",
+      currentStep: null,
+      stepState: idleState(),
+      characters: [character({ image: doneImage("portraits/char_1.jpg") })],
+      chapters: [chapter({ image: doneImage("chapters/chapter_1.jpg") })]
+    });
+    let detailReads = 0;
+
+    mockApi({
+      project: runningProject,
+      getProject: () => {
+        detailReads += 1;
+        return detailReads === 1 ? runningProject : completedProject;
+      }
+    });
+    renderApp("/projects/project_00000000-0000-4000-8000-000000000001");
+
+    expect(await screen.findByText(/Running Illustration/)).toBeInTheDocument();
+    await act(async () => {
+      await delay(1600);
+    });
+
+    expect(await screen.findByText("Final illustration workflow complete.")).toBeInTheDocument();
   });
 
   it("shows failed retry state with a concise message", async () => {
@@ -216,6 +276,20 @@ describe("frontend flow", () => {
     expect(screen.getByAltText("Scene for Riverbank")).toBeInTheDocument();
     expect(screen.getByText("Final illustration workflow complete.")).toBeInTheDocument();
   });
+
+  it("signs out and returns to the identity screen", async () => {
+    mockApi();
+    renderApp("/projects");
+
+    expect(await screen.findByText("Mira Hassan")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(await screen.findByRole("heading", { name: "Book Illustration Studio" })).toBeInTheDocument();
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/session",
+      expect.objectContaining({ method: "DELETE", credentials: "include" })
+    );
+  });
 });
 
 function renderApp(route) {
@@ -226,7 +300,13 @@ function renderApp(route) {
   );
 }
 
-function mockApi({ sessionStatus = 200, projects = [], project = detailProject(), bookText = "A short book text." } = {}) {
+function mockApi({
+  sessionStatus = 200,
+  projects = [],
+  project = detailProject(),
+  bookText = "A short book text.",
+  getProject
+} = {}) {
   global.fetch = vi.fn(async (url, options = {}) => {
     const path = String(url).replace(/^https?:\/\/[^/]+/, "");
     const method = options.method ?? "GET";
@@ -237,6 +317,14 @@ function mockApi({ sessionStatus = 200, projects = [], project = detailProject()
 
     if (path === "/api/session" && method === "POST") {
       return json(200, { user });
+    }
+
+    if (path === "/api/session" && method === "DELETE") {
+      return {
+        ok: true,
+        status: 204,
+        json: async () => ({})
+      };
     }
 
     if (path === "/api/projects" && method === "GET") {
@@ -252,7 +340,7 @@ function mockApi({ sessionStatus = 200, projects = [], project = detailProject()
     }
 
     if (path.includes("/api/projects/") && method === "GET") {
-      return json(200, { project });
+      return json(200, { project: getProject ? getProject(path) : project });
     }
 
     if (path.includes("/steps/") && method === "POST") {
@@ -333,4 +421,10 @@ function chapter(overrides = {}) {
     image: { status: "pending", path: null, error: null },
     ...overrides
   };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
