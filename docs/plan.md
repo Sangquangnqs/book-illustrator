@@ -4,6 +4,42 @@ Build required behavior first, then polish. Each milestone should be runnable, t
 
 Final status: milestones 1-8 are complete.
 
+## Plan at a Glance
+
+```mermaid
+flowchart LR
+  subgraph Foundation
+    M1["M1 · Scaffold"]
+    M2["M2 · Storage + State"]
+    M3["M3 · Identity + APIs"]
+  end
+
+  subgraph CorrectnessCore["Correctness Core"]
+    M4["M4 · Pipeline<br/>ordering · concurrency · recovery"]
+  end
+
+  subgraph Integration
+    M5["M5 · Gemini SDK"]
+    M6["M6 · React UI"]
+  end
+
+  subgraph Delivery
+    M7["M7 · Tests + Postman"]
+    M8["M8 · Docs + Final Verification"]
+  end
+
+  M1 --> M2 --> M3 --> M4 --> M5 --> M6 --> M7 --> M8
+  M4 -. "fake Gemini first" .-> M5
+  M4 -. "backend-authoritative state" .-> M6
+```
+
+Build strategy:
+
+- Foundation — M1–M3: runnable stack, durable state, identity, ownership, and project APIs.
+- Correctness core — M4: ordering, concurrency, stale recovery, retries, and duplicate-call protection are proven with a fake Gemini client before external AI integration.
+- Integration/product — M5–M6: connect the tested pipeline contract to Gemini, then build the React UI on backend-authoritative state.
+- Proof/delivery — M7–M8: consolidate tests and Postman, then finalize reviewer documentation and repository verification.
+
 ## 1. Project scaffolding and scripts
 
 Goal: Create the React/Vite frontend, Express backend, shared local dev shape, and one-command entry points.
