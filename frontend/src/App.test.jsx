@@ -252,6 +252,8 @@ describe("frontend flow", () => {
       "Portrait generation is unavailable because Gemini image quota or billing is not available. Retry after updating API quota or billing.";
 
     expect(await screen.findAllByText(friendlyMessage)).toHaveLength(2);
+    expect(screen.getByRole("alert")).toHaveTextContent("Portrait generation unavailable");
+    expect(screen.getByRole("alert")).toHaveTextContent(friendlyMessage);
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.queryByText(/RESOURCE_EXHAUSTED/)).not.toBeInTheDocument();

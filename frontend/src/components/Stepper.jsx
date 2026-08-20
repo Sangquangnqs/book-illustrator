@@ -10,7 +10,7 @@ export function Stepper({ project }) {
         return (
           <li className={`step ${state}`} key={step.key}>
             <span className="step-number" aria-hidden="true">
-              {state === "done" ? "OK" : index + 1}
+              {state === "done" ? <>&#10003;</> : index + 1}
             </span>
             <span>
               <span className="step-label">{step.label}</span>

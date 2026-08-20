@@ -45,63 +45,71 @@ export function NewProject() {
       <section className="page-header">
         <p className="eyebrow">New project</p>
         <h1>Start with the book text</h1>
-        <p>The backend stores the original text once and later reuses Gemini context between steps.</p>
+        <p>
+          Create the source file for a small illustration pipeline. Paste text directly or upload one `.txt` file.
+        </p>
       </section>
       <form className="form-card" onSubmit={handleSubmit} noValidate>
-        <label className="field">
-          <span>
-            Project title <span className="req">*</span>
-          </span>
-          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="The Wind in the Willows" />
-        </label>
-
-        <div className="segmented" role="radiogroup" aria-label="Book source">
-          <button
-            aria-pressed={source === "paste"}
-            className={source === "paste" ? "selected" : ""}
-            type="button"
-            onClick={() => setSource("paste")}
-          >
-            Paste text
-          </button>
-          <button
-            aria-pressed={source === "upload"}
-            className={source === "upload" ? "selected" : ""}
-            type="button"
-            onClick={() => setSource("upload")}
-          >
-            Upload .txt
-          </button>
-        </div>
-
-        {source === "paste" ? (
+        <div className="form-section">
+          <p className="form-kicker">Project details</p>
           <label className="field">
             <span>
-              Book text <span className="req">*</span>
+              Project title <span className="req">*</span>
             </span>
-            <textarea
-              rows={9}
-              value={bookText}
-              onChange={(event) => setBookText(event.target.value)}
-              placeholder="Paste a few chapters or the complete text here..."
-            />
+            <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="The Wind in the Willows" />
           </label>
-        ) : (
-          <label className={`upload-box ${bookFile ? "has-file" : ""}`}>
-            <span>{bookFile ? bookFile.name : "Choose a .txt file"}</span>
-            <small>Plain text only. Do not also paste text.</small>
-            <input
-              type="file"
-              accept=".txt,text/plain"
-              onChange={(event) => setBookFile(event.target.files?.[0] ?? null)}
-            />
-          </label>
-        )}
+        </div>
+
+        <div className="form-section source-section">
+          <p className="form-kicker">Book source</p>
+          <div className="segmented" role="radiogroup" aria-label="Book source">
+            <button
+              aria-pressed={source === "paste"}
+              className={source === "paste" ? "selected" : ""}
+              type="button"
+              onClick={() => setSource("paste")}
+            >
+              Paste text
+            </button>
+            <button
+              aria-pressed={source === "upload"}
+              className={source === "upload" ? "selected" : ""}
+              type="button"
+              onClick={() => setSource("upload")}
+            >
+              Upload .txt
+            </button>
+          </div>
+
+          {source === "paste" ? (
+            <label className="field">
+              <span>
+                Book text <span className="req">*</span>
+              </span>
+              <textarea
+                rows={9}
+                value={bookText}
+                onChange={(event) => setBookText(event.target.value)}
+                placeholder="Paste a few chapters or the complete text here..."
+              />
+            </label>
+          ) : (
+            <label className={`upload-box ${bookFile ? "has-file" : ""}`}>
+              <span>{bookFile ? bookFile.name : "Choose a .txt file"}</span>
+              <small>Plain text only. Do not also paste text.</small>
+              <input
+                type="file"
+                accept=".txt,text/plain"
+                onChange={(event) => setBookFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+          )}
+        </div>
 
         {error ? <p className="form-error">{error}</p> : null}
         <button className="button primary full" type="submit" disabled={submitting} aria-label="Create project">
-          {submitting ? "Creating..." : "Create project"}
-          {!submitting ? <span aria-hidden="true">-&gt;</span> : null}
+          <span>{submitting ? "Creating..." : "Create project"}</span>
+          {!submitting ? <span className="button-arrow" aria-hidden="true">&rarr;</span> : null}
         </button>
       </form>
     </main>

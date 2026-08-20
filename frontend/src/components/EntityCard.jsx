@@ -20,10 +20,25 @@ export function EntityCard({ projectId, entity, type }) {
           <h3>{entity.name}</h3>
           <span className={`image-status ${image?.status ?? "pending"}`}>{statusLabel(image?.status)}</span>
         </div>
-        <p>{entity.prompt}</p>
-        {image?.status === "failed" ? <p className="inline-error image-error">{friendlyImageError(image.error, type)}</p> : null}
+        <p className="prompt-label">{type === "chapter" ? "Scene prompt" : "Portrait prompt"}</p>
+        <p className="prompt-text">{entity.prompt}</p>
+        {image?.status === "failed" ? <ImageFailureCallout error={image.error} type={type} /> : null}
       </div>
     </article>
+  );
+}
+
+function ImageFailureCallout({ error, type }) {
+  return (
+    <div className="image-error-callout" role="alert">
+      <span className="image-error-icon" aria-hidden="true">
+        !
+      </span>
+      <div>
+        <p className="image-error-title">{failureTitle(type)}</p>
+        <p className="image-error-copy">{friendlyImageError(error, type)}</p>
+      </div>
+    </div>
   );
 }
 
@@ -51,6 +66,10 @@ function statusLabel(status) {
     failed: "Failed",
     pending: "Pending"
   }[status ?? "pending"];
+}
+
+function failureTitle(type) {
+  return type === "chapter" ? "Illustration generation unavailable" : "Portrait generation unavailable";
 }
 
 function friendlyImageError(error, type) {

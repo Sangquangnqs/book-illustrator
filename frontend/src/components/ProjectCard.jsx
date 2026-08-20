@@ -6,15 +6,29 @@ export function ProjectCard({ project }) {
 
   return (
     <Link className="project-card" to={`/projects/${project.id}`}>
+      <div className="project-mark" aria-hidden="true">
+        <span>{Math.max(1, completed)}</span>
+      </div>
       <div className="project-card-main">
         <span className={`status-pill ${statusTone(project.status)}`}>{projectStatusLabel(project.status)}</span>
         <h2>{project.title}</h2>
-        <p>Created {formatDate(project.createdAt)}</p>
+        <p>
+          Created {formatDate(project.createdAt)}
+          {project.updatedAt && project.updatedAt !== project.createdAt ? (
+            <>
+              {" "}
+              &middot; Updated {formatDate(project.updatedAt)}
+            </>
+          ) : null}
+        </p>
       </div>
-      <div className="mini-progress" aria-label={`${completed} of 5 steps complete`}>
-        {Array.from({ length: 5 }, (_, index) => (
-          <span className={index < completed ? "filled" : ""} key={index} />
-        ))}
+      <div className="project-progress-block">
+        <span>{completed} / 5 complete</span>
+        <div className="mini-progress" aria-label={`${completed} of 5 steps complete`}>
+          {Array.from({ length: 5 }, (_, index) => (
+            <span className={index < completed ? "filled" : ""} key={index} />
+          ))}
+        </div>
       </div>
     </Link>
   );

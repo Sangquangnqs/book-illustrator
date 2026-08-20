@@ -4,6 +4,8 @@ Book Illustration Studio is a local full-stack app for the Gradion take-home ass
 
 The app is intentionally local and lean. Project state is persisted to JSON files, book text and generated images are stored on disk, and the backend owns all pipeline ordering, retry, duplicate-call, and ownership checks.
 
+![Book Illustration Studio landing page](docs/screenshots/image.png)
+
 ## Tech Stack
 
 - React + Vite frontend with plain CSS

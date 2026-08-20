@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client.js";
 import { EntityCard } from "../components/EntityCard.jsx";
 import { Stepper } from "../components/Stepper.jsx";
-import { formatDate, stepLabel } from "../domain/project.js";
+import { formatDate, projectStatusLabel, stepLabel } from "../domain/project.js";
 
 export function ProjectDetail() {
   const { projectId } = useParams();
@@ -125,6 +125,9 @@ export function ProjectDetail() {
           <p className="eyebrow">Illustration workspace</p>
           <h1>{project.title}</h1>
           <p>Created {formatDate(project.createdAt)}</p>
+          <span className={`status-pill workspace-status ${statusTone(project.status)}`}>
+            {projectStatusLabel(project.status)}
+          </span>
         </div>
         <button className="button secondary" type="button" onClick={() => setBookOpen(true)}>
           Read book text
@@ -186,14 +189,19 @@ function ActionPanel({
   retryStep
 }) {
   const done = project.status === "DONE";
-  const activeStep = project.stepState.step ?? project.currentStep;
+  const runningStep = project.stepState.step;
 
   return (
     <section className={`action-panel ${failed || stale ? "needs-attention" : ""}`} aria-live="polite">
       <div>
         <p className="eyebrow">Current action</p>
-        <h2>{done ? "All steps complete" : actionLabel}</h2>
-        {running ? <p>Running {stepLabel(project.stepState.step)}. This page polls the backend state.</p> : null}
+        <h2>{done ? "All steps complete" : running ? runningHeading(runningStep) : actionLabel}</h2>
+        {running ? (
+          <p>
+            Running {stepLabel(runningStep)} with Gemini. This page polls the backend state and will update when the
+            step finishes.
+          </p>
+        ) : null}
         {failed ? <p>{friendlyStepError(project.stepState.error, project.stepState.step)}</p> : null}
         {stale ? <p>This step looks stranded after a server interruption. Retry it explicitly to continue.</p> : null}
         {!running && !failed && !stale && !done ? <p>Each step runs only when you click. The next step will not auto-start.</p> : null}
@@ -205,7 +213,7 @@ function ActionPanel({
           <input
             value={style}
             onChange={(event) => setStyle(event.target.value)}
-            placeholder="Leave blank and let Gemini choose"
+          placeholder="Leave blank and let Gemini choose"
           />
         </label>
       ) : null}
@@ -216,17 +224,43 @@ function ActionPanel({
         <p className="done-note">Final illustration workflow complete.</p>
       ) : (
         <button
-          className={`button ${failed || stale ? "secondary" : "primary"}`}
+          className={`button action-button ${running ? "is-running" : ""} ${failed || stale ? "secondary" : "primary"}`}
           type="button"
           disabled={running || busyAction}
+          aria-label={running ? actionLabel : undefined}
           onClick={failed || stale ? retryStep : runCurrentStep}
         >
-          {busyAction ? "Starting..." : actionLabel}
+          {running ? (
+            <>
+              <span className="button-spinner" aria-hidden="true" />
+              <span>Generating...</span>
+            </>
+          ) : (
+            busyAction ? "Starting..." : actionLabel
+          )}
         </button>
       )}
-      <span className="action-meta">Backend authority: {activeStep ? stepLabel(activeStep) : "Done"}</span>
+      <span className="action-meta">
+        {running ? "You can safely refresh this page while generation continues." : "Your progress is saved after each step."}
+      </span>
     </section>
   );
+}
+
+function runningHeading(step) {
+  return {
+    STYLE: "Generating visual style",
+    CHARACTERS: "Finding main characters",
+    PORTRAITS: "Generating character portraits",
+    CHAPTERS: "Choosing chapter scene",
+    ILLUSTRATIONS: "Generating final illustration"
+  }[step] ?? "Generating project assets";
+}
+
+function statusTone(status) {
+  if (status === "DONE") return "done";
+  if (status === "CREATED") return "draft";
+  return "active";
 }
 
 function friendlyStepError(error, step) {

@@ -1,4 +1,4 @@
-import { Outlet, Link, useNavigate } from "react-router-dom";
+import { Outlet, Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
 import { GradionWordmark } from "./GradionWordmark.jsx";
 
@@ -26,8 +26,10 @@ export function AppShell() {
             <GradionWordmark className="nav-wordmark" />
           </Link>
           <nav className="nav-links" aria-label="Main navigation">
-            <Link to="/projects">Projects</Link>
-            <Link to="/projects/new">New project</Link>
+            <NavLink to="/projects" end>
+              Projects
+            </NavLink>
+            <NavLink to="/projects/new">New project</NavLink>
           </nav>
           <div className="user-chip">
             <span className="avatar">{initials}</span>
