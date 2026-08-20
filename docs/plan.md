@@ -2,6 +2,8 @@
 
 Build required behavior first, then polish. Each milestone should be runnable, testable, and small enough to commit on its own.
 
+Final status: milestones 1-8 are complete.
+
 ## 1. Project scaffolding and scripts
 
 Goal: Create the React/Vite frontend, Express backend, shared local dev shape, and one-command entry points.

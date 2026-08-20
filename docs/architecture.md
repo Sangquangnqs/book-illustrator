@@ -42,7 +42,7 @@ This keeps the app small while still satisfying the important requirements: resu
 
 ## Pipeline Flow
 
-The pipeline follows the first five steps of Google's book illustration notebook. Each step is user-triggered. The backend enforces order and never auto-runs the next step.
+The pipeline implements the assessment's required five steps, using Google's book illustration notebook as a reference for Gemini interaction mechanics. Each step is user-triggered. The backend enforces order and never auto-runs the next step.
 
 ```mermaid
 flowchart TD
@@ -82,9 +82,10 @@ sequenceDiagram
   BE->>FS: Read project.json
   BE->>BE: Validate ownership, order, caps, and running state
   BE->>FS: Persist running step with runId
-  BE->>G: Call Gemini for this step
+  BE-->>FE: Return running state immediately
+  BE->>G: Continue Gemini work in-process
   G-->>BE: Return JSON or image
-  BE->>FS: Save result and advance status
+  BE->>FS: Save result and advance status if runId still matches
   FE->>BE: Poll project detail
   BE-->>FE: Current persisted state
   FE-->>U: Show progress/result/error
@@ -136,7 +137,12 @@ Use one `project.json` per project. Keep a simple top-level `status` for list vi
   },
   "gemini": {
     "fileUri": "files/...",
-    "bookInteractionId": "..."
+    "bookInteractionId": "...",
+    "styleInteractionId": "...",
+    "charactersInteractionId": "...",
+    "charactersImageInteractionId": "...",
+    "latestImageInteractionId": "...",
+    "chaptersInteractionId": "..."
   },
   "style": null,
   "characters": [],
@@ -169,7 +175,7 @@ For image steps, store per-item progress so portraits and illustrations can land
   "prompt": "...",
   "image": {
     "status": "done",
-    "path": "portraits/char_1.png",
+    "path": "portraits/char_1_<runId>.jpg",
     "error": null,
     "geminiInteractionId": "..."
   }
@@ -187,10 +193,10 @@ data/
       book.txt
       images/
         portraits/
-          char_1.png
-          char_2.png
+          char_1_<runId>.jpg
+          char_2_<runId>.jpg
         chapters/
-          chapter_1.png
+          chapter_1_<runId>.jpg
 ```
 
 `users.json` maps normalized emails to user records and project IDs. Each project owns its own folder so metadata, source text, and generated images stay isolated.
@@ -199,9 +205,10 @@ Writes should be atomic: write JSON to a temporary file in the same directory, t
 
 ## REST API Endpoints
 
-Authentication can be a simple signed cookie or local token returned after identity creation.
+Identity uses a signed HttpOnly email cookie. The backend still loads the user from `users.json` and checks project ownership on every project-scoped route.
 
 - `POST /api/session`: create or load a user from `{ name, email }`.
+- `GET /api/session`: return the current signed-in user.
 - `DELETE /api/session`: sign out.
 - `GET /api/projects`: list the current user's projects.
 - `POST /api/projects`: create a project from title plus uploaded `.txt` or pasted `bookText`.
@@ -215,13 +222,14 @@ Polling is enough for the base assessment. SSE or WebSockets would be a bonus, n
 
 ## Gemini Integration Flow
 
-Use the official `@google/genai` JavaScript SDK behind a small backend wrapper, pinned to an explicit package version. Use `GEMINI_API_KEY` from the environment and keep a `.env.example` with variable names only. SDK-specific code should stay inside the wrapper so the rest of the backend works with app-level methods like `generateStyle`, `generateCharacters`, and `generatePortrait`.
+Use the official `@google/genai` JavaScript SDK behind a small backend wrapper, pinned to an explicit package version. The final implementation uses `@google/genai@2.17.1`, `gemini-3.7-flash` for text/structured-output interactions, and `gemini-3.1-flash-image` for Nano Banana image interactions. Use `GEMINI_API_KEY` from the environment and keep a `.env.example` with variable names only. SDK-specific code stays inside the wrapper so the rest of the backend works with app-level methods like `generateStyle`, `generateCharacters`, and `generatePortrait`.
 
 Before the first Gemini step, the backend saves the book locally, uploads it through Gemini's File API, creates a reusable book context or interaction, and persists the returned identifiers.
 
 Step 1, Style:
 
-- Use the user-supplied style if provided, otherwise ask Gemini to generate one from the book context.
+- Always call Gemini from the book interaction, even when the user supplies a style, so the style interaction exists for later chaining.
+- Use the user-supplied style as art direction if provided, otherwise ask Gemini to generate one from the book context.
 - Persist the final style and any interaction ID needed by later steps.
 
 Step 2, Characters:
@@ -235,6 +243,9 @@ Step 2, Characters:
 Step 3, Portraits:
 
 - Generate portraits sequentially for the capped character list.
+- Portrait 1 starts the image interaction chain with no `previous_interaction_id`.
+- Later portraits chain from `latestImageInteractionId`.
+- Persist `charactersImageInteractionId` from the first portrait and update `latestImageInteractionId` after each successful image.
 - Save each image file and update that character's image status as soon as it completes.
 
 Step 4, Chapters:
@@ -247,7 +258,7 @@ Step 4, Chapters:
 
 Step 5, Illustrations:
 
-- Generate the single chapter illustration using the chapter prompt, style, and prior character portrait context.
+- Create the chapter image context from the latest image interaction, then generate the single chapter illustration from that latest image-chain state.
 - Save the image before marking the project done.
 
 ## Duplicate Execution And Concurrency Strategy
@@ -262,9 +273,11 @@ The backend performs an atomic "claim step" before every Gemini call:
 6. If failed or stale, require explicit retry.
 7. Set `stepState` to `running` with `step`, `runId`, and `startedAt`.
 8. Atomically write `project.json`.
-9. Release the mutex, then call Gemini.
+9. Release the mutex, return the running state immediately, then continue Gemini work in-process.
 
 When Gemini finishes, the backend reacquires the project mutex and only commits results if the stored `runId` still matches. This prevents an old request from overwriting a newer retry.
+
+For image work, the backend also checks the current `runId` before expensive Gemini image calls and again before writing image bytes. Image filenames include the run ID, so a superseded run cannot overwrite a newer retry's generated file.
 
 This is enough for a local single-process server. Redis, queues, database transactions, and background workers are intentionally out of scope.
 
@@ -291,7 +304,7 @@ Use conservative per-step stale timeouts, such as 10 minutes for text steps and 
 
 - The app is reviewed locally by one evaluator at a time, so an in-process mutex plus persisted state is acceptable.
 - A server crash cannot continue an HTTP request that died mid-call; the app only needs to detect and recover, not resume the exact network call.
-- The Gemini File API object remains valid long enough for the assessment review. If it expires, the retry path can re-upload `book.txt` and refresh `fileUri`.
+- The implementation assumes the persisted Gemini File API object remains valid for the assessment review session. Automatic recovery from an expired Gemini file/context is not implemented.
 - Polling project detail during running steps is acceptable.
 - Gemini structured output supports enough JSON Schema array constraints for `maxItems` to be part of the request, but the backend still validates the response before saving it.
 - Local JSON storage is acceptable if writes are atomic and isolated per project.
