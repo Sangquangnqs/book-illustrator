@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { ZodError } from "zod";
 import {
   chapterResponseFormat,
   characterResponseFormat,
@@ -126,7 +127,7 @@ export function createGeminiClient({ apiKey, ai } = {}) {
         });
 
         return {
-          bytes: imageBytes(interaction),
+          ...imageResult(interaction),
           geminiInteractionId: interaction.id,
           gemini: {
             latestImageInteractionId: interaction.id
@@ -154,6 +155,22 @@ export function createGeminiClient({ apiKey, ai } = {}) {
       });
     },
 
+    async ensureChapterImageContext({ project, chapter }) {
+      return withGeminiErrors(async () => {
+        const interaction = await createInteraction(client, {
+          model: GEMINI_IMAGE_MODEL,
+          previous_interaction_id: requireId(project.gemini.latestImageInteractionId, "latestImageInteractionId"),
+          input:
+            "Prepare the image chain for the final chapter illustration using the established character appearances. " +
+            `Chapter: ${chapter.name}. Prompt: ${chapter.prompt}.`
+        });
+
+        return {
+          latestImageInteractionId: interaction.id
+        };
+      });
+    },
+
     async generateChapters({ project }) {
       return withGeminiErrors(async () => {
         const interaction = await createInteraction(client, {
@@ -175,16 +192,9 @@ export function createGeminiClient({ apiKey, ai } = {}) {
 
     async generateIllustration({ project, chapter }) {
       return withGeminiErrors(async () => {
-        const starter = await createInteraction(client, {
-          model: GEMINI_IMAGE_MODEL,
-          previous_interaction_id: requireId(project.gemini.latestImageInteractionId, "latestImageInteractionId"),
-          input:
-            "Next, create the final chapter illustration using the established character appearances. " +
-            `Chapter: ${chapter.name}. Prompt: ${chapter.prompt}.`
-        });
         const interaction = await createInteraction(client, {
           model: GEMINI_IMAGE_MODEL,
-          previous_interaction_id: starter.id,
+          previous_interaction_id: requireId(project.gemini.latestImageInteractionId, "latestImageInteractionId"),
           response_format: imageResponseFormat,
           input:
             `Create the final scene illustration for ${chapter.name}. ` +
@@ -192,7 +202,7 @@ export function createGeminiClient({ apiKey, ai } = {}) {
         });
 
         return {
-          bytes: imageBytes(interaction),
+          ...imageResult(interaction),
           geminiInteractionId: interaction.id,
           gemini: { latestImageInteractionId: interaction.id }
         };
@@ -239,14 +249,22 @@ function requireText(interaction) {
   return interaction.output_text.trim();
 }
 
-function imageBytes(interaction) {
-  const data = interaction.output_image?.data;
+function imageResult(interaction) {
+  const image = interaction.output_image;
+  const data = image?.data;
 
   if (!data) {
     throw new GeminiClientError("Gemini did not return image data.", "GEMINI_IMAGE_MISSING");
   }
 
-  return Buffer.from(data, "base64");
+  if (!image.mime_type) {
+    throw new GeminiClientError("Gemini did not return an image MIME type.", "GEMINI_IMAGE_MISSING");
+  }
+
+  return {
+    bytes: Buffer.from(data, "base64"),
+    mimeType: image.mime_type
+  };
 }
 
 function requireId(value, name) {
@@ -272,6 +290,10 @@ async function withGeminiErrors(callback) {
 function normalizeGeminiError(error) {
   const status = error?.status ?? error?.code;
   const message = error?.message || "Gemini request failed.";
+
+  if (error instanceof SyntaxError || error instanceof ZodError) {
+    return new GeminiClientError(message, "GEMINI_INVALID_OUTPUT", { status, cause: error });
+  }
 
   if (status === 429 || String(message).includes("429")) {
     return new GeminiClientError(message, "GEMINI_RATE_LIMIT", { status, cause: error });

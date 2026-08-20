@@ -208,7 +208,7 @@ export class PipelineService {
           step,
           listKey: "characters",
           kind: "portraits",
-          fileNameFor: (item, currentRunId) => `${item.id}_${currentRunId}.png`,
+          fileNameFor: (item, currentRunId, extension) => `${item.id}_${currentRunId}${extension}`,
           generate: (current, item) =>
             this.geminiClient.generatePortrait({
               project: current,
@@ -253,7 +253,8 @@ export class PipelineService {
           step,
           listKey: "chapters",
           kind: "chapters",
-          fileNameFor: (item, currentRunId) => `${item.id}_${currentRunId}.png`,
+          fileNameFor: (item, currentRunId, extension) => `${item.id}_${currentRunId}${extension}`,
+          prepare: (current, item) => this.#ensureChapterImageContext(projectId, runId, current, item),
           generate: (current, item) =>
             this.geminiClient.generateIllustration({
               project: current,
@@ -356,7 +357,37 @@ export class PipelineService {
     return updated;
   }
 
-  async #generateImages({ projectId, runId, step, listKey, kind, fileNameFor, generate }) {
+  async #ensureChapterImageContext(projectId, runId, current, chapter) {
+    await this.#requireCurrentRun(projectId, runId);
+
+    const result = await this.geminiClient.ensureChapterImageContext({
+      project: current,
+      chapter
+    });
+
+    await this.#requireCurrentRun(projectId, runId);
+
+    const updated = await this.storage.updateProject(projectId, (project) => {
+      if (project.stepState.runId !== runId) {
+        return project;
+      }
+
+      return {
+        ...project,
+        gemini: mergeGemini(project.gemini, {
+          latestImageInteractionId: result.latestImageInteractionId
+        })
+      };
+    });
+
+    if (updated.stepState.runId !== runId) {
+      throw new SupersededRunError();
+    }
+
+    return updated;
+  }
+
+  async #generateImages({ projectId, runId, step, listKey, kind, fileNameFor, prepare, generate }) {
     let current = await this.#requireCurrentRun(projectId, runId);
 
     for (const item of current[listKey]) {
@@ -378,13 +409,18 @@ export class PipelineService {
 
       try {
         await this.#requireCurrentRun(projectId, runId);
+        if (prepare) {
+          current = await prepare(current, latestItem);
+        }
+        await this.#requireCurrentRun(projectId, runId);
         const result = await generate(current, latestItem);
         await this.#requireCurrentRun(projectId, runId);
+        const image = normalizeImageResult(result);
         const path = await this.storage.writeProjectImage(
           projectId,
           kind,
-          fileNameFor(latestItem, runId),
-          normalizeImageBytes(result)
+          fileNameFor(latestItem, runId, image.extension),
+          image.bytes
         );
 
         current = await this.#updateImageItem(projectId, runId, listKey, item.id, {
@@ -487,27 +523,44 @@ function mergeGemini(existing, next = {}) {
   };
 }
 
-function normalizeImageBytes(result) {
-  if (Buffer.isBuffer(result)) {
-    return result;
-  }
+function normalizeImageResult(result) {
+  let bytes;
 
   if (Buffer.isBuffer(result?.bytes)) {
-    return result.bytes;
+    bytes = result.bytes;
+  } else if (typeof result?.bytes === "string") {
+    bytes = Buffer.from(result.bytes);
+  } else if (typeof result?.base64 === "string") {
+    bytes = Buffer.from(result.base64, "base64");
   }
 
-  if (typeof result?.bytes === "string") {
-    return Buffer.from(result.bytes);
+  if (!bytes) {
+    throw new PipelineError("Gemini did not return image bytes.", {
+      status: 502,
+      code: "GEMINI_IMAGE_MISSING"
+    });
   }
 
-  if (typeof result?.base64 === "string") {
-    return Buffer.from(result.base64, "base64");
+  const extension = extensionForMimeType(result.mimeType);
+
+  return { bytes, extension };
+}
+
+function extensionForMimeType(mimeType) {
+  const extension = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp"
+  }[mimeType];
+
+  if (!extension) {
+    throw new PipelineError(`Unsupported Gemini image MIME type: ${mimeType || "missing"}.`, {
+      status: 502,
+      code: "GEMINI_INVALID_OUTPUT"
+    });
   }
 
-  throw new PipelineError("Gemini did not return image bytes.", {
-    status: 502,
-    code: "INVALID_IMAGE_OUTPUT"
-  });
+  return extension;
 }
 
 function toStepError(error) {

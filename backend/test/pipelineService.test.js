@@ -238,7 +238,7 @@ describe("PipelineService", () => {
       stored.stepState.status === "failed"
     );
 
-    expect(failed.characters[0].image).toMatchObject({ status: "done", path: "portraits/char_1_run_3.png" });
+    expect(failed.characters[0].image).toMatchObject({ status: "done", path: "portraits/char_1_run_3.jpg" });
     expect(failed.characters[1].image).toMatchObject({ status: "failed" });
 
     const retryStarted = await service.retryStep({ projectId: project.id, userEmail, step: "PORTRAITS" });
@@ -264,7 +264,7 @@ describe("PipelineService", () => {
           stepState: runningState("PORTRAITS", "run_new")
         }));
       }
-      return { bytes: Buffer.from(`portrait ${character.id}`) };
+      return { bytes: Buffer.from(`portrait ${character.id}`), mimeType: "image/jpeg" };
     };
     const service = createService(client);
     const project = await createProject();
@@ -292,7 +292,7 @@ describe("PipelineService", () => {
       }),
       generatePortrait: async () => {
         await deferred.promise;
-        return { bytes: Buffer.from("old portrait") };
+        return { bytes: Buffer.from("old portrait"), mimeType: "image/jpeg" };
       }
     });
     const project = await createProject();
@@ -394,6 +394,67 @@ describe("PipelineService", () => {
       stepState: { status: "failed", step: "CHAPTERS" }
     });
     expect(result.chapters).toEqual([]);
+  });
+
+  it("derives image file extensions from Gemini MIME types", async () => {
+    const service = createService(createFakeGeminiClient({ imageMimeType: "image/webp" }));
+    const project = await createProject();
+    await runAndWait(service, { projectId: project.id, userEmail, step: "STYLE" });
+    await runAndWait(service, { projectId: project.id, userEmail, step: "CHARACTERS" });
+
+    const result = await runAndWait(service, { projectId: project.id, userEmail, step: "PORTRAITS" });
+
+    expect(result.characters[0].image.path).toBe("portraits/char_1_run_3.webp");
+    expect(result.characters[1].image.path).toBe("portraits/char_2_run_3.webp");
+  });
+
+  it("fails cleanly when Gemini returns an unsupported image MIME type", async () => {
+    const service = createService(createFakeGeminiClient({ imageMimeType: "image/gif" }));
+    const project = await createProject();
+    await runAndWait(service, { projectId: project.id, userEmail, step: "STYLE" });
+    await runAndWait(service, { projectId: project.id, userEmail, step: "CHARACTERS" });
+
+    const result = await runAndWait(service, { projectId: project.id, userEmail, step: "PORTRAITS" }, (stored) =>
+      stored.stepState.status === "failed"
+    );
+
+    expect(result).toMatchObject({
+      status: "CHARACTERS_DONE",
+      stepState: { status: "failed", step: "PORTRAITS", error: { code: "GEMINI_INVALID_OUTPUT" } }
+    });
+  });
+
+  it("checks runId between chapter image starter and final illustration", async () => {
+    let projectId;
+    let finalCalls = 0;
+    const client = createFakeGeminiClient();
+    client.ensureChapterImageContext = async () => {
+      await storage.updateProject(projectId, (project) => ({
+        ...project,
+        stepState: runningState("ILLUSTRATIONS", "run_new")
+      }));
+      return { latestImageInteractionId: "old-chapter-image-starter" };
+    };
+    client.generateIllustration = async () => {
+      finalCalls += 1;
+      return { bytes: Buffer.from("old final"), mimeType: "image/jpeg" };
+    };
+    const service = createService(client);
+    const project = await createProject();
+    projectId = project.id;
+    await runAndWait(service, { projectId, userEmail, step: "STYLE" });
+    await runAndWait(service, { projectId, userEmail, step: "CHARACTERS" });
+    await runAndWait(service, { projectId, userEmail, step: "PORTRAITS" });
+    await runAndWait(service, { projectId, userEmail, step: "CHAPTERS" });
+
+    await service.runStep({ projectId, userEmail, step: "ILLUSTRATIONS" });
+    await delay(80);
+
+    expect(finalCalls).toBe(0);
+    await expect(storage.readProject(projectId)).resolves.toMatchObject({
+      status: "CHAPTERS_DONE",
+      stepState: { status: "running", runId: "run_new" }
+    });
   });
 });
 
