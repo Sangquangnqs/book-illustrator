@@ -8,12 +8,11 @@ import {
 } from "./geminiSchemas.js";
 
 export const GEMINI_TEXT_MODEL = "gemini-3.7-flash";
-export const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-lite-image";
+export const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image";
 
 const imageResponseFormat = {
   type: "image",
-  mime_type: "image/jpeg",
-  delivery: "inline"
+  mime_type: "image/jpeg"
 };
 
 export class GeminiClientError extends Error {
@@ -116,41 +115,25 @@ export function createGeminiClient({ apiKey, ai } = {}) {
 
     async generatePortrait({ project, character }) {
       return withGeminiErrors(async () => {
-        const interaction = await createInteraction(client, {
+        const params = removeUndefined({
           model: GEMINI_IMAGE_MODEL,
-          previous_interaction_id: requireId(project.gemini.latestImageInteractionId, "latestImageInteractionId"),
+          previous_interaction_id: project.gemini.latestImageInteractionId,
           response_format: imageResponseFormat,
           input:
             `Create a character portrait for ${character.name}. ` +
+            `Use this art style consistently: ${project.style}. ` +
             `Use this prompt: ${character.prompt}. ` +
             "Portrait only, no text, no labels, no frame."
         });
+        const interaction = await createInteraction(client, params);
 
         return {
           ...imageResult(interaction),
           geminiInteractionId: interaction.id,
           gemini: {
+            charactersImageInteractionId: project.gemini.charactersImageInteractionId ?? interaction.id,
             latestImageInteractionId: interaction.id
           }
-        };
-      });
-    },
-
-    async ensureImageContext({ project }) {
-      if (project.gemini.charactersImageInteractionId) {
-        return {
-          charactersImageInteractionId: project.gemini.charactersImageInteractionId,
-          latestImageInteractionId:
-            project.gemini.latestImageInteractionId ?? project.gemini.charactersImageInteractionId
-        };
-      }
-
-      return withGeminiErrors(async () => {
-        const interaction = await createImageContextInteraction(client, project);
-
-        return {
-          charactersImageInteractionId: interaction.id,
-          latestImageInteractionId: interaction.id
         };
       });
     },
@@ -209,16 +192,6 @@ export function createGeminiClient({ apiKey, ai } = {}) {
       });
     }
   };
-}
-
-async function createImageContextInteraction(client, project) {
-  return createInteraction(client, {
-    model: GEMINI_IMAGE_MODEL,
-    input:
-      "Start an image-generation chain for this book's character portraits. " +
-      `Use this art style consistently: ${project.style}. ` +
-      "Keep character appearance consistent across later interactions. No text in images."
-  });
 }
 
 async function createInteraction(client, params) {
@@ -314,4 +287,8 @@ function classifyMessage(message) {
   }
 
   return "GEMINI_REQUEST_FAILED";
+}
+
+function removeUndefined(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }

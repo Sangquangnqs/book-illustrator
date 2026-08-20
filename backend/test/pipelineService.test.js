@@ -5,6 +5,16 @@ import { ProjectStorage } from "../src/storage/projectStorage.js";
 import { createTempDataDir } from "./helpers/tempDataDir.js";
 
 const userEmail = "mira@example.com";
+const PIPELINE_TEST_TIMEOUT_MS = 15_000;
+const WAIT_TIMEOUT_MS = 8_000;
+const POLL_INTERVAL_MS = 50;
+const SUCCESS_STATUS_BY_STEP = {
+  STYLE: "STYLE_DONE",
+  CHARACTERS: "CHARACTERS_DONE",
+  PORTRAITS: "PORTRAITS_DONE",
+  CHAPTERS: "CHAPTERS_DONE",
+  ILLUSTRATIONS: "DONE"
+};
 
 let temp;
 let storage;
@@ -23,7 +33,7 @@ afterEach(async () => {
 });
 
 describe("PipelineService", () => {
-  it("runs all five happy-path transitions in order", async () => {
+  pipelineTest("runs all five happy-path transitions in order", async () => {
     const service = createService(createFakeGeminiClient());
     const project = await createProject();
 
@@ -55,7 +65,7 @@ describe("PipelineService", () => {
     expect(final.chapters.every((chapter) => chapter.image.status === "done")).toBe(true);
   });
 
-  it("rejects out-of-order steps", async () => {
+  pipelineTest("rejects out-of-order steps", async () => {
     const service = createService(createFakeGeminiClient());
     const project = await createProject();
 
@@ -67,7 +77,7 @@ describe("PipelineService", () => {
     });
   });
 
-  it("deduplicates simultaneous run requests before calling Gemini", async () => {
+  pipelineTest("deduplicates simultaneous run requests before calling Gemini", async () => {
     const deferred = createDeferred();
     let generateStyleCalls = 0;
     const client = {
@@ -95,7 +105,7 @@ describe("PipelineService", () => {
     });
   });
 
-  it("returns the persisted running state without another Gemini call", async () => {
+  pipelineTest("returns the persisted running state without another Gemini call", async () => {
     const client = createFakeGeminiClient();
     const service = createService(client);
     const project = await createProject();
@@ -113,7 +123,7 @@ describe("PipelineService", () => {
     expect(client.count("generateStyle")).toBe(0);
   });
 
-  it("persists failed steps and requires retry", async () => {
+  pipelineTest("persists failed steps and requires retry", async () => {
     const service = createService(createFakeGeminiClient({ failures: { generateStyle: "style failed" } }));
     const project = await createProject();
 
@@ -129,7 +139,7 @@ describe("PipelineService", () => {
     });
   });
 
-  it("requires explicit retry for stale running steps", async () => {
+  pipelineTest("requires explicit retry for stale running steps", async () => {
     const service = createService(createFakeGeminiClient());
     const project = await createProject();
     await storage.updateProject(project.id, (current) => ({
@@ -143,7 +153,7 @@ describe("PipelineService", () => {
     expect(service.viewProject(await storage.readProject(project.id)).stepState.status).toBe("stale");
   });
 
-  it("creates a new runId when retrying", async () => {
+  pipelineTest("creates a new runId when retrying", async () => {
     const service = createService(createFakeGeminiClient({ style: "charcoal" }));
     const project = await createProject();
     await storage.updateProject(project.id, (current) => ({
@@ -164,7 +174,7 @@ describe("PipelineService", () => {
     expect(result).toMatchObject({ status: "STYLE_DONE", style: "charcoal", stepState: { runId: null } });
   });
 
-  it("does not let an old success completion overwrite newer retry state", async () => {
+  pipelineTest("does not let an old success completion overwrite newer retry state", async () => {
     const deferred = createDeferred();
     const service = createService({
       ensureBookContext: async () => ({ fileUri: "files/fake-book", bookInteractionId: "fake-book" }),
@@ -191,7 +201,7 @@ describe("PipelineService", () => {
     expect(stored.style).toBe(null);
   });
 
-  it("does not let an old failure completion overwrite newer retry state", async () => {
+  pipelineTest("does not let an old failure completion overwrite newer retry state", async () => {
     const deferred = createDeferred();
     const service = createService({
       ensureBookContext: async () => ({ fileUri: "files/fake-book", bookInteractionId: "fake-book" }),
@@ -216,7 +226,7 @@ describe("PipelineService", () => {
     expect(stored.stepState).toMatchObject({ status: "running", runId: "run_new", error: null });
   });
 
-  it("preserves a successful portrait and skips it when retrying the failed portrait", async () => {
+  pipelineTest("preserves a successful portrait and skips it when retrying the failed portrait", async () => {
     let char2Attempts = 0;
     const client = createFakeGeminiClient({
       failures: {
@@ -252,7 +262,28 @@ describe("PipelineService", () => {
       .toHaveLength(2);
   });
 
-  it("stops a superseded image run before making another expensive image call", async () => {
+  pipelineTest("starts the image chain with the first portrait instead of a starter call", async () => {
+    const client = createFakeGeminiClient();
+    const service = createService(client);
+    const project = await createProject();
+    await runAndWait(service, { projectId: project.id, userEmail, step: "STYLE" });
+    await runAndWait(service, { projectId: project.id, userEmail, step: "CHARACTERS" });
+
+    const result = await runAndWait(service, { projectId: project.id, userEmail, step: "PORTRAITS" });
+    const portraitCalls = client.calls.filter((call) => call.method === "generatePortrait");
+
+    expect(client.count("ensureImageContext")).toBe(0);
+    expect(result.gemini).toMatchObject({
+      charactersImageInteractionId: "fake-portrait-char_1",
+      latestImageInteractionId: "fake-portrait-char_2"
+    });
+    expect(portraitCalls[0].input.project.gemini).not.toHaveProperty("latestImageInteractionId");
+    expect(portraitCalls[1].input.project.gemini).toMatchObject({
+      latestImageInteractionId: "fake-portrait-char_1"
+    });
+  });
+
+  pipelineTest("stops a superseded image run before making another expensive image call", async () => {
     let projectId;
     let portraitCalls = 0;
     const client = createFakeGeminiClient();
@@ -282,14 +313,10 @@ describe("PipelineService", () => {
     });
   });
 
-  it("does not let stale image results overwrite a newer retry file path", async () => {
+  pipelineTest("does not let stale image results overwrite a newer retry file path", async () => {
     const deferred = createDeferred();
     const service = createService({
       ensureBookContext: async () => ({ fileUri: "files/fake-book", bookInteractionId: "fake-book" }),
-      ensureImageContext: async () => ({
-        charactersImageInteractionId: "fake-characters-image-interaction",
-        latestImageInteractionId: "fake-characters-image-interaction"
-      }),
       generatePortrait: async () => {
         await deferred.promise;
         return { bytes: Buffer.from("old portrait"), mimeType: "image/jpeg" };
@@ -331,7 +358,7 @@ describe("PipelineService", () => {
     });
   });
 
-  it("calls ensureBookContext once and reuses persisted context", async () => {
+  pipelineTest("calls ensureBookContext once and reuses persisted context", async () => {
     const client = createFakeGeminiClient();
     const service = createService(client);
     const project = await createProject();
@@ -347,7 +374,7 @@ describe("PipelineService", () => {
     });
   });
 
-  it("fails oversized character output instead of truncating", async () => {
+  pipelineTest("fails oversized character output instead of truncating", async () => {
     const service = createService(
       createFakeGeminiClient({
         characters: [
@@ -371,7 +398,7 @@ describe("PipelineService", () => {
     expect(result.characters).toEqual([]);
   });
 
-  it("fails oversized chapter output instead of truncating", async () => {
+  pipelineTest("fails oversized chapter output instead of truncating", async () => {
     const service = createService(
       createFakeGeminiClient({
         chapters: [
@@ -396,7 +423,7 @@ describe("PipelineService", () => {
     expect(result.chapters).toEqual([]);
   });
 
-  it("derives image file extensions from Gemini MIME types", async () => {
+  pipelineTest("derives image file extensions from Gemini MIME types", async () => {
     const service = createService(createFakeGeminiClient({ imageMimeType: "image/webp" }));
     const project = await createProject();
     await runAndWait(service, { projectId: project.id, userEmail, step: "STYLE" });
@@ -408,7 +435,7 @@ describe("PipelineService", () => {
     expect(result.characters[1].image.path).toBe("portraits/char_2_run_3.webp");
   });
 
-  it("fails cleanly when Gemini returns an unsupported image MIME type", async () => {
+  pipelineTest("fails cleanly when Gemini returns an unsupported image MIME type", async () => {
     const service = createService(createFakeGeminiClient({ imageMimeType: "image/gif" }));
     const project = await createProject();
     await runAndWait(service, { projectId: project.id, userEmail, step: "STYLE" });
@@ -424,7 +451,7 @@ describe("PipelineService", () => {
     });
   });
 
-  it("checks runId between chapter image starter and final illustration", async () => {
+  pipelineTest("checks runId between chapter image starter and final illustration", async () => {
     let projectId;
     let finalCalls = 0;
     const client = createFakeGeminiClient();
@@ -458,6 +485,10 @@ describe("PipelineService", () => {
   });
 });
 
+function pipelineTest(name, fn) {
+  return it(name, fn, PIPELINE_TEST_TIMEOUT_MS);
+}
+
 function createService(client) {
   return new PipelineService({
     storage,
@@ -483,30 +514,34 @@ async function createProject() {
   });
 }
 
-async function runAndWait(service, args, isDone = (stored) => stored.stepState.status !== "running") {
+async function runAndWait(service, args, isDone = (stored) => stored.status === SUCCESS_STATUS_BY_STEP[args.step]) {
   const started = await service.runStep(args);
   expect(started).toMatchObject({ type: "running", project: { stepState: { status: "running" } } });
   return waitForProject(service, args.projectId, isDone);
 }
 
 async function waitForProject(service, projectId, predicate) {
-  for (let attempt = 0; attempt < 300; attempt += 1) {
+  const deadline = Date.now() + WAIT_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
     const project = service.viewProject(await storage.readProject(projectId));
     if (predicate(project)) {
       return project;
     }
-    await delay(10);
+    await delay(POLL_INTERVAL_MS);
   }
 
   throw new Error("Timed out waiting for project state");
 }
 
 async function waitForCondition(predicate) {
-  for (let attempt = 0; attempt < 300; attempt += 1) {
+  const deadline = Date.now() + WAIT_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
     if (predicate()) {
       return;
     }
-    await delay(10);
+    await delay(POLL_INTERVAL_MS);
   }
 
   throw new Error("Timed out waiting for condition");

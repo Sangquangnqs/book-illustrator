@@ -50,20 +50,17 @@ export function createFakeGeminiClient(options = {}) {
         gemini: { charactersInteractionId: "fake-characters-interaction" }
       }));
     },
-    ensureImageContext(input) {
-      return call("ensureImageContext", input, () => ({
-        charactersImageInteractionId:
-          options.charactersImageInteractionId ?? "fake-characters-image-interaction",
-        latestImageInteractionId:
-          options.charactersImageInteractionId ?? "fake-characters-image-interaction"
-      }));
-    },
     generatePortrait(input) {
+      const interactionId = `fake-portrait-${input.character.id}`;
       return call("generatePortrait", input, () => ({
         bytes: Buffer.from(`fake portrait ${input.character.id}`),
         mimeType: options.imageMimeType ?? "image/jpeg",
-        geminiInteractionId: `fake-portrait-${input.character.id}`,
-        gemini: { latestImageInteractionId: `fake-portrait-${input.character.id}` }
+        geminiInteractionId: interactionId,
+        gemini: {
+          charactersImageInteractionId:
+            input.project.gemini.charactersImageInteractionId ?? interactionId,
+          latestImageInteractionId: interactionId
+        }
       }));
     },
     ensureChapterImageContext(input) {

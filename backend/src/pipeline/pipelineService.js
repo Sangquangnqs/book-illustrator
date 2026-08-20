@@ -201,7 +201,6 @@ export class PipelineService {
         }));
       } else if (step === "PORTRAITS") {
         await this.#ensureBookContext(projectId, runId);
-        await this.#ensureImageContext(projectId, runId);
         await this.#generateImages({
           projectId,
           runId,
@@ -308,44 +307,6 @@ export class PipelineService {
         gemini: mergeGemini(project.gemini, {
           fileUri: result.fileUri,
           bookInteractionId: result.bookInteractionId
-        })
-      };
-    });
-
-    if (updated.stepState.runId !== runId) {
-      throw new SupersededRunError();
-    }
-
-    return updated;
-  }
-
-  async #ensureImageContext(projectId, runId) {
-    const current = await this.#requireCurrentRun(projectId, runId);
-
-    if (current.gemini.charactersImageInteractionId) {
-      return current;
-    }
-
-    const result = await this.geminiClient.ensureImageContext({
-      project: current
-    });
-
-    await this.#requireCurrentRun(projectId, runId);
-
-    const updated = await this.storage.updateProject(projectId, (project) => {
-      if (project.stepState.runId !== runId) {
-        return project;
-      }
-
-      if (project.gemini.charactersImageInteractionId) {
-        return project;
-      }
-
-      return {
-        ...project,
-        gemini: mergeGemini(project.gemini, {
-          charactersImageInteractionId: result.charactersImageInteractionId,
-          latestImageInteractionId: result.latestImageInteractionId ?? result.charactersImageInteractionId
         })
       };
     });

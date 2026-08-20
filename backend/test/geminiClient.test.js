@@ -109,10 +109,13 @@ describe("Gemini client", () => {
     );
   });
 
-  it("creates and reuses the separate image interaction chain for portraits", async () => {
+  it("uses the Interactions-supported Nano Banana image model", () => {
+    expect(GEMINI_IMAGE_MODEL).toBe("gemini-3.1-flash-image");
+  });
+
+  it("starts the image interaction chain with the first portrait", async () => {
     const ai = createMockAi({
       interactions: [
-        { id: "image-context", status: "completed", output_text: "ready" },
         {
           id: "portrait-1",
           status: "completed",
@@ -122,34 +125,73 @@ describe("Gemini client", () => {
     });
     const client = createGeminiClient({ ai });
 
-    const context = await client.ensureImageContext({
-      project: project({ style: "ink wash", gemini: {} })
-    });
     const portrait = await client.generatePortrait({
       project: project({
-        gemini: {
-          charactersImageInteractionId: context.charactersImageInteractionId,
-          latestImageInteractionId: context.latestImageInteractionId
-        }
+        style: "ink wash",
+        gemini: {}
       }),
       character: { id: "char_1", name: "Mole", prompt: "Mole prompt" }
     });
 
-    expect(context).toEqual({
-      charactersImageInteractionId: "image-context",
-      latestImageInteractionId: "image-context"
-    });
     expect(portrait.bytes.toString()).toBe("portrait");
     expect(portrait.mimeType).toBe("image/jpeg");
     expect(portrait).toMatchObject({
       geminiInteractionId: "portrait-1",
-      gemini: { latestImageInteractionId: "portrait-1" }
+      gemini: {
+        charactersImageInteractionId: "portrait-1",
+        latestImageInteractionId: "portrait-1"
+      }
     });
-    expect(ai.interactions.create).toHaveBeenLastCalledWith(
+    expect(ai.interactions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         model: GEMINI_IMAGE_MODEL,
-        previous_interaction_id: "image-context",
-        response_format: expect.objectContaining({ type: "image" })
+        response_format: {
+          type: "image",
+          mime_type: "image/jpeg"
+        }
+      })
+    );
+    expect(ai.interactions.create.mock.calls[0][0].response_format).not.toHaveProperty("delivery");
+    expect(ai.interactions.create.mock.calls[0][0]).not.toHaveProperty("previous_interaction_id");
+  });
+
+  it("chains later portraits from the latest image interaction", async () => {
+    const ai = createMockAi({
+      interactions: [
+        {
+          id: "portrait-2",
+          status: "completed",
+          output_image: { type: "image", data: Buffer.from("portrait").toString("base64"), mime_type: "image/jpeg" }
+        }
+      ]
+    });
+    const client = createGeminiClient({ ai });
+
+    const portrait = await client.generatePortrait({
+      project: project({
+        gemini: {
+          charactersImageInteractionId: "portrait-1",
+          latestImageInteractionId: "portrait-1"
+        }
+      }),
+      character: { id: "char_2", name: "Rat", prompt: "Rat prompt" }
+    });
+
+    expect(portrait).toMatchObject({
+      geminiInteractionId: "portrait-2",
+      gemini: {
+        charactersImageInteractionId: "portrait-1",
+        latestImageInteractionId: "portrait-2"
+      }
+    });
+    expect(ai.interactions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: GEMINI_IMAGE_MODEL,
+        previous_interaction_id: "portrait-1",
+        response_format: {
+          type: "image",
+          mime_type: "image/jpeg"
+        }
       })
     );
   });
@@ -225,7 +267,10 @@ describe("Gemini client", () => {
     expect(ai.interactions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         previous_interaction_id: "chapter-image-starter",
-        response_format: expect.objectContaining({ type: "image" })
+        response_format: {
+          type: "image",
+          mime_type: "image/jpeg"
+        }
       })
     );
     expect(result.bytes.toString()).toBe("scene");
